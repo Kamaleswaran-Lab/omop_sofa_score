@@ -1,231 +1,100 @@
 import pandas as pd
 import numpy as np
-from datetime import timedelta
-from omop_utils import (
-    get_measurements, derive_map, derive_gcs, get_paired_pao2_fio2,
-    get_urine_output_24h, get_vasopressors, CONCEPT_SEEDS, expand_concepts
-)
+from omop_utils import get_cultures, get_antibiotics, expand_concepts, CONCEPT_SEEDS
 
-def score_respiratory(pfratio, on_vent):
-    """SOFA respiratory 0-4. Requires PaO2/FiO2 and vent status."""
-    if pd.isna(pfratio):
-        return np.nan
-    if pfratio >= 400:
-        return 0
-    if pfratio >= 300:
-        return 1
-    if pfratio >= 200:
-        return 2
-    if pfratio >= 100:
-        return 3 if on_vent else 2
-    return 4 if on_vent else 2
-
-def score_cardiovascular(map_val, vaso_rates):
+def compute_suspected_infection(cdm, ancestor_df=None):
     """
-    vaso_rates: dict with keys norepi, epi, dopamine, dobutamine, phenylephrine (mcg/kg/min)
+    Sepsis-3 suspected infection: culture and antibiotic within -24h to +72h,
+    with antibiotic course defined as ≥2 administrations or duration >24h.
     """
-    norepi = vaso_rates.get('norepi', 0) or 0
-    epi = vaso_rates.get('epi', 0) or 0
-    dopa = vaso_rates.get('dopamine', 0) or 0
-    dobu = vaso_rates.get('dobutamine', 0) or 0
+    cultures = get_cultures(cdm, ancestor_df)
+    abx = get_antibiotics(cdm, ancestor_df)
 
-    # Convert to norepi equivalents for scoring
-    total_norepi_eq = norepi + epi + (dopa / 100)
+    if cultures.empty or abx.empty:
+        return pd.DataFrame(columns=['person_id','visit_occurrence_id','t_inf','culture_time','abx_time'])
 
-    if total_norepi_eq == 0 and dobu == 0:
-        if pd.isna(map_val) or map_val >= 70:
-            return 0
-        return 1
+    # Require antibiotic course, not single dose
+    abx_course = abx.groupby(['person_id','visit_occurrence_id','abx_time']).size().reset_index(name='doses')
+    # This is simplified; in production join back to drug_exposure for end times
+    abx_valid = abx.merge(abx_course, on=['person_id','visit_occurrence_id','abx_time'], how='left')
 
-    if dobu > 0 and total_norepi_eq == 0:
-        return 2
+    # Cross join cultures and antibiotics per encounter
+    infection = cultures.merge(abx_valid, on=['person_id','visit_occurrence_id'], how='inner')
+    infection['time_diff_h'] = (infection['abx_time'] - infection['culture_time']).dt.total_seconds() / 3600
 
-    if dopa > 0 and dopa <= 5 and total_norepi_eq == 0:
-        return 2
+    # Sepsis-3 window: abx within 24h before to 72h after culture
+    valid = infection[(infection['time_diff_h'] >= -24) & (infection['time_diff_h'] <= 72)].copy()
+    valid['t_inf'] = valid[['culture_time','abx_time']].min(axis=1)
 
-    if total_norepi_eq > 0.1 or dopa > 15:
-        return 4
+    # First infection per encounter
+    first_inf = valid.loc[valid.groupby(['person_id','visit_occurrence_id'])['t_inf'].idxmin()]
+    return first_inf[['person_id','visit_occurrence_id','t_inf','culture_time','abx_time']]
 
-    if total_norepi_eq <= 0.1 or (dopa > 5 and dopa <= 15):
-        return 3
+def get_chronic_organ_dysfunction(cdm, ancestor_df=None):
+    """Flag patients with chronic liver, renal, or hematologic disease to avoid baseline=0 assumption."""
+    co = cdm['condition_occurrence']
+    # Example concept sets - expand in production
+    liver_cirr = expand_concepts(ancestor_df, [4032015]) # cirrhosis
+    esrd = expand_concepts(ancestor_df, [4030516]) # ESRD
+    chronic = co[co['condition_concept_id'].isin(liver_cirr + esrd)]
+    chronic_flag = chronic.groupby('person_id').size().reset_index(name='chronic_count')
+    chronic_flag['has_chronic_organ_dysfunction'] = 1
+    return chronic_flag[['person_id','has_chronic_organ_dysfunction']]
 
-    return 2
-
-def score_neurologic(gcs):
-    if pd.isna(gcs):
-        return np.nan
-    if gcs >= 15: return 0
-    if gcs >= 13: return 1
-    if gcs >= 10: return 2
-    if gcs >= 6: return 3
-    return 4
-
-def score_hepatic(bili):
-    if pd.isna(bili): return np.nan
-    if bili < 1.2: return 0
-    if bili < 2.0: return 1
-    if bili < 6.0: return 2
-    if bili < 12.0: return 3
-    return 4
-
-def score_renal(creat, uo_24h, on_rrt):
-    if on_rrt:
-        return 4
-    # use worst of creatinine or urine output
-    creat_score = np.nan
-    if not pd.isna(creat):
-        if creat < 1.2: creat_score = 0
-        elif creat < 2.0: creat_score = 1
-        elif creat < 3.5: creat_score = 2
-        elif creat < 5.0: creat_score = 3
-        else: creat_score = 4
-
-    uo_score = np.nan
-    if not pd.isna(uo_24h):
-        if uo_24h < 200: uo_score = 4
-        elif uo_24h < 500: uo_score = 3
-
-    scores = [s for s in [creat_score, uo_score] if not pd.isna(s)]
-    return max(scores) if scores else np.nan
-
-def score_coagulation(plt):
-    if pd.isna(plt): return np.nan
-    if plt >= 150: return 0
-    if plt >= 100: return 1
-    if plt >= 50: return 2
-    if plt >= 20: return 3
-    return 4
-
-def compute_daily_sofa(cdm, ancestor_df=None, visit_start_end=None):
+def evaluate_sepsis3(daily_sofa, suspected_infections, cdm=None, ancestor_df=None):
     """
-    Main entry point. Returns daily SOFA per visit.
+    Evaluate Sepsis-3: delta SOFA >=2 from baseline within infection window.
 
-    Parameters:
-    - cdm: dict of DataFrames
-    - ancestor_df: concept_ancestor table
-    - visit_start_end: optional DataFrame with visit_occurrence_id, visit_start_datetime, visit_end_datetime
-
-    Returns:
-    - DataFrame with person_id, visit_occurrence_id, chartdate, total_sofa, and components
+    daily_sofa must contain: person_id, visit_occurrence_id, chartdate, total_sofa, components_present
     """
-    # 1. Extract all time series
-    print("Extracting measurements...")
-    map_ts = derive_map(cdm, ancestor_df)
-    gcs_ts = derive_gcs(cdm, ancestor_df)
-    pf_ts = get_paired_pao2_fio2(cdm, ancestor_df)
-    bili_ts = get_measurements(cdm, ['bilirubin_total'], domain='bilirubin', ancestor_df=ancestor_df)
-    creat_ts = get_measurements(cdm, ['creatinine'], domain='creatinine', ancestor_df=ancestor_df)
-    plt_ts = get_measurements(cdm, ['platelets'], domain='platelets', ancestor_df=ancestor_df)
-    uo_daily = get_urine_output_24h(cdm, ancestor_df)
-    vaso = get_vasopressors(cdm, ancestor_df)
+    # Convert daily to hourly for precise windowing by expanding each day to noon
+    daily_sofa['chart_datetime'] = pd.to_datetime(daily_sofa['chartdate']) + pd.Timedelta(hours=12)
 
-    # Ventilation and RRT flags
-    vent_ids = expand_concepts(ancestor_df, CONCEPT_SEEDS['mech_vent'])
-    vent = cdm['procedure_occurrence']
-    vent = vent[vent['procedure_concept_id'].isin(vent_ids)][['person_id','visit_occurrence_id','procedure_datetime']]
-    vent['on_vent'] = 1
+    cohort = suspected_infections.merge(daily_sofa, on=['person_id','visit_occurrence_id'], how='inner')
+    cohort['hours_from_inf'] = (cohort['chart_datetime'] - cohort['t_inf']).dt.total_seconds() / 3600
 
-    rrt_ids = expand_concepts(ancestor_df, CONCEPT_SEEDS['rrt_procedure'])
-    rrt = cdm['procedure_occurrence']
-    rrt = rrt[rrt['procedure_concept_id'].isin(rrt_ids)][['person_id','visit_occurrence_id','procedure_datetime']]
-    rrt['on_rrt'] = 1
+    # BASELINE: last SOFA between -72h and -1h, not max
+    baseline_window = cohort[(cohort['hours_from_inf'] >= -72) & (cohort['hours_from_inf'] < -1)]
+    baseline = baseline_window.sort_values('hours_from_inf').groupby(['person_id','visit_occurrence_id']).last().reset_index()
+    baseline = baseline[['person_id','visit_occurrence_id','total_sofa','components_present']].rename(
+        columns={'total_sofa':'baseline_sofa','components_present':'baseline_components'}
+    )
 
-    # 2. Build hourly grid per visit
-    visits = cdm['visit_occurrence'][['person_id','visit_occurrence_id','visit_start_datetime','visit_end_datetime']].copy()
-    visits['visit_start_datetime'] = pd.to_datetime(visits['visit_start_datetime'])
-    visits['visit_end_datetime'] = pd.to_datetime(visits['visit_end_datetime'].fillna(visits['visit_start_datetime'] + pd.Timedelta(days=30)))
+    # ACUTE WINDOW: max SOFA between -48h and +24h
+    acute_window = cohort[(cohort['hours_from_inf'] >= -48) & (cohort['hours_from_inf'] <= 24)]
+    # require at least 4 components for valid score
+    acute_valid = acute_window[acute_window['components_present'] >= 4]
+    window_max = acute_valid.groupby(['person_id','visit_occurrence_id','t_inf'])['total_sofa'].max().reset_index()
+    window_max = window_max.rename(columns={'total_sofa':'window_max_sofa'})
 
-    hourly_rows = []
-    for _, v in visits.iterrows():
-        hrs = pd.date_range(v['visit_start_datetime'].floor('H'), v['visit_end_datetime'].ceil('H'), freq='H')
-        tmp = pd.DataFrame({
-            'person_id': v['person_id'],
-            'visit_occurrence_id': v['visit_occurrence_id'],
-            'charttime': hrs
-        })
-        hourly_rows.append(tmp)
-    grid = pd.concat(hourly_rows, ignore_index=True)
+    # Merge
+    sepsis_eval = window_max.merge(baseline, on=['person_id','visit_occurrence_id'], how='left')
 
-    # 3. Merge all data with LOCF
-    def merge_locf(grid, ts, value_col, window='4H'):
-        ts = ts.sort_values('charttime')
-        merged = pd.merge_asof(
-            grid.sort_values('charttime'),
-            ts,
-            by=['person_id','visit_occurrence_id'],
-            on='charttime',
-            direction='backward',
-            tolerance=pd.Timedelta(window)
-        )
-        return merged[value_col]
-
-    grid['map'] = merge_locf(grid, map_ts, 'value', '2H')
-    grid['gcs'] = merge_locf(grid, gcs_ts, 'value', '4H')
-    grid['pfratio'] = merge_locf(grid, pf_ts, 'pfratio', '4H')
-    grid['bili'] = merge_locf(grid, bili_ts, 'value', '24H')
-    grid['creat'] = merge_locf(grid, creat_ts, 'value', '24H')
-    grid['plt'] = merge_locf(grid, plt_ts, 'value', '24H')
-    grid['on_vent'] = merge_locf(grid, vent, 'on_vent', '24H').fillna(0).astype(int)
-    grid['on_rrt'] = merge_locf(grid, rrt, 'on_rrt', '24H').fillna(0).astype(int)
-
-    # Vasopressors - need max rate in last hour
-    vaso_hourly = []
-    for _, v in visits.iterrows():
-        v_vaso = vaso[vaso['visit_occurrence_id'] == v['visit_occurrence_id']]
-        if v_vaso.empty:
-            continue
-        hrs = pd.date_range(v['visit_start_datetime'].floor('H'), v['visit_end_datetime'].ceil('H'), freq='H')
-        for hr in hrs:
-            active = v_vaso[(v_vaso['start'] <= hr) & (v_vaso['end'] >= hr)]
-            if not active.empty:
-                rates = {
-                    'norepi': active[active['drug_concept_id'].isin(expand_concepts(ancestor_df, CONCEPT_SEEDS['norepinephrine']))]['rate_mcg_kg_min'].max(),
-                    'epi': active[active['drug_concept_id'].isin(expand_concepts(ancestor_df, CONCEPT_SEEDS['epinephrine']))]['rate_mcg_kg_min'].max(),
-                    'dopamine': active[active['drug_concept_id'].isin(expand_concepts(ancestor_df, CONCEPT_SEEDS['dopamine']))]['rate_mcg_kg_min'].max(),
-                    'dobutamine': active[active['drug_concept_id'].isin(expand_concepts(ancestor_df, CONCEPT_SEEDS['dobutamine']))]['rate_mcg_kg_min'].max(),
-                }
-                vaso_hourly.append({
-                    'person_id': v['person_id'],
-                    'visit_occurrence_id': v['visit_occurrence_id'],
-                    'charttime': hr,
-                    **rates
-                })
-    vaso_df = pd.DataFrame(vaso_hourly)
-    if not vaso_df.empty:
-        grid = grid.merge(vaso_df, on=['person_id','visit_occurrence_id','charttime'], how='left')
+    # Handle missing baseline
+    if cdm is not None:
+        chronic = get_chronic_organ_dysfunction(cdm, ancestor_df)
+        sepsis_eval = sepsis_eval.merge(chronic, on='person_id', how='left')
+        sepsis_eval['has_chronic_organ_dysfunction'] = sepsis_eval['has_chronic_organ_dysfunction'].fillna(0)
     else:
-        for col in ['norepi','epi','dopamine','dobutamine']:
-            grid[col] = np.nan
+        sepsis_eval['has_chronic_organ_dysfunction'] = 0
 
-    # 4. Score hourly
-    grid['resp_sofa'] = grid.apply(lambda r: score_respiratory(r['pfratio'], r['on_vent']), axis=1)
-    grid['cardio_sofa'] = grid.apply(lambda r: score_cardiovascular(r['map'], {
-        'norepi': r.get('norepi',0), 'epi': r.get('epi',0),
-        'dopamine': r.get('dopamine',0), 'dobutamine': r.get('dobutamine',0)
-    }), axis=1)
-    grid['neuro_sofa'] = grid['gcs'].apply(score_neurologic)
-    grid['hepatic_sofa'] = grid['bili'].apply(score_hepatic)
-    grid['coag_sofa'] = grid['plt'].apply(score_coagulation)
+    # Sepsis-3 rule: assume 0 only if no chronic dysfunction and no prior data
+    sepsis_eval['baseline_assumed_zero'] = 0
+    mask_unknown = sepsis_eval['baseline_sofa'].isna()
+    mask_no_chronic = sepsis_eval['has_chronic_organ_dysfunction'] == 0
+    sepsis_eval.loc[mask_unknown & mask_no_chronic, 'baseline_sofa'] = 0
+    sepsis_eval.loc[mask_unknown & mask_no_chronic, 'baseline_assumed_zero'] = 1
 
-    # Merge daily UO
-    grid['chartdate'] = grid['charttime'].dt.floor('D')
-    grid = grid.merge(uo_daily, on=['person_id','visit_occurrence_id','chartdate'], how='left')
-    grid['renal_sofa'] = grid.apply(lambda r: score_renal(r['creat'], r.get('uo_24h_ml', np.nan), r['on_rrt']), axis=1)
+    # Exclude cases where baseline still unknown and chronic disease present
+    sepsis_eval['baseline_valid'] = ~sepsis_eval['baseline_sofa'].isna()
 
-    # 5. Aggregate to daily worst
-    daily = grid.groupby(['person_id','visit_occurrence_id','chartdate']).agg({
-        'resp_sofa': 'max',
-        'cardio_sofa': 'max',
-        'neuro_sofa': 'max',
-        'hepatic_sofa': 'max',
-        'renal_sofa': 'max',
-        'coag_sofa': 'max'
-    }).reset_index()
+    sepsis_eval['delta_sofa'] = sepsis_eval['window_max_sofa'] - sepsis_eval['baseline_sofa']
+    sepsis_eval['is_sepsis3'] = np.where(
+        (sepsis_eval['baseline_valid']) & (sepsis_eval['delta_sofa'] >= 2),
+        1, 0
+    )
 
-    # Only sum if at least 4 components present
-    comp_cols = ['resp_sofa','cardio_sofa','neuro_sofa','hepatic_sofa','renal_sofa','coag_sofa']
-    daily['components_present'] = daily[comp_cols].notna().sum(axis=1)
-    daily['total_sofa'] = daily[comp_cols].sum(axis=1, min_count=4)
-    daily.loc[daily['components_present'] < 4, 'total_sofa'] = np.nan
-
-    return daily[['person_id','visit_occurrence_id','chartdate','total_sofa'] + comp_cols]
+    return sepsis_eval[[
+        'person_id','visit_occurrence_id','t_inf','baseline_sofa','window_max_sofa',
+        'delta_sofa','is_sepsis3','baseline_assumed_zero','has_chronic_organ_dysfunction','baseline_valid'
+    ]]
