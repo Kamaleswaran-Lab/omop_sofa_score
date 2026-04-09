@@ -11,9 +11,9 @@ Most OMOP SOFA implementations fail for the same reasons: hard-coded concept_ids
 ```
 omop_sofa_score/
 ├── README.md
-├── omop_calc_sofa.py          # main SOFA calculator
 └── src/
     ├── omop_utils.py          # concept expansion, unit conversion, derivations
+    ├── omop_calc_sofa.py          # main SOFA calculator
     └── omop_calc_sepsis3.py    # suspected infection and Sepsis-3 evaluation
 ```
 
