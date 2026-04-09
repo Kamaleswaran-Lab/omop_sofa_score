@@ -72,7 +72,7 @@ sepsis3 = evaluate_sepsis3(daily_sofa, suspected, cdm, cdm['concept_ancestor'])
 ### SOFA component thresholds
 
 | System | 0 | 1 | 2 | 3 | 4 |
-| --- | --- | --- | --- |
+| --- | --- | --- | --- | --- | --- |
 | Respiratory PaO2/FiO2 | ≥400 | 300-399 | 200-299 | 100-199 with vent | <100 with vent |
 | Cardiovascular | MAP ≥70 | MAP <70 | Dopamine ≤5 or dobutamine any | Dopamine 5-15 or epi/norepi ≤0.1 | Dopamine >15 or epi/norepi >0.1 |
 | Neurologic GCS | 15 | 13-14 | 10-12 | 6-9 | <6 |
