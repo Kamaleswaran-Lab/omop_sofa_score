@@ -1,6 +1,6 @@
 # SOFA_on_OMOP
 
-Implements a correct, portable Sequential Organ Failure Assessment and Sepsis-3 detector for OHDSI OMOP CDM. Fixes the informatics errors that make most public SOFA scripts non-reproducible across sites.
+Implements a Sequential Organ Failure Assessment and Sepsis-3 detector for OHDSI OMOP CDM.
 
 ## Why this repo exists
 
