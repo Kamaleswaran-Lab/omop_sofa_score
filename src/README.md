@@ -70,7 +70,7 @@ sepsis3 = evaluate_sepsis3(daily_sofa, suspected, cdm, cdm['concept_ancestor'])
 ## Methodology details
 
 ### SOFA component thresholds
-
+```
 | System | 0 | 1 | 2 | 3 | 4 |
 | --- | --- | --- | --- |
 | Respiratory PaO2/FiO2 | ≥400 | 300-399 | 200-299 | 100-199 with vent | <100 with vent |
@@ -79,7 +79,7 @@ sepsis3 = evaluate_sepsis3(daily_sofa, suspected, cdm, cdm['concept_ancestor'])
 | Hepatic bilirubin mg/dL | <1.2 | 1.2-1.9 | 2.0-5.9 | 6.0-11.9 | ≥12.0 |
 | Renal creatinine mg/dL or UO | <1.2 | 1.2-1.9 | 2.0-3.4 | 3.5-4.9 or UO <500ml/d | ≥5.0 or UO <200ml/d or RRT |
 | Coagulation platelets 10^3/µL | ≥150 | 100-149 | 50-99 | 20-49 | <20 |
-
+```
 ### Temporal rules
 
 - **LOCF windows:** MAP 2h, GCS 4h, PaO2/FiO2 4h, labs 24h
