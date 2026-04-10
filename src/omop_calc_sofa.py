@@ -122,12 +122,16 @@ def compute_daily_sofa(cdm, ancestor_df=None, visit_start_end=None):
     # Ventilation and RRT flags
     vent_ids = expand_concepts(ancestor_df, CONCEPT_SEEDS['mech_vent'])
     vent = cdm['procedure_occurrence']
-    vent = vent[vent['procedure_concept_id'].isin(vent_ids)][['person_id','visit_occurrence_id','procedure_datetime']]
+    vent = vent[vent['procedure_concept_id'].isin(vent_ids)][['person_id','visit_occurrence_id','procedure_datetime']].copy()
+    vent = vent.rename(columns={'procedure_datetime': 'charttime'})
+    vent['charttime'] = pd.to_datetime(vent['charttime'])
     vent['on_vent'] = 1
 
     rrt_ids = expand_concepts(ancestor_df, CONCEPT_SEEDS['rrt_procedure'])
     rrt = cdm['procedure_occurrence']
-    rrt = rrt[rrt['procedure_concept_id'].isin(rrt_ids)][['person_id','visit_occurrence_id','procedure_datetime']]
+    rrt = rrt[rrt['procedure_concept_id'].isin(rrt_ids)][['person_id','visit_occurrence_id','procedure_datetime']].copy()
+    rrt = rrt.rename(columns={'procedure_datetime': 'charttime'})
+    rrt['charttime'] = pd.to_datetime(rrt['charttime'])
     rrt['on_rrt'] = 1
 
     # 2. Build hourly grid per visit
