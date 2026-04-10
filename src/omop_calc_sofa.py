@@ -109,17 +109,17 @@ def compute_daily_sofa(cdm, ancestor_df=None, min_components=1, impute_missing_a
 
     hourly_rows = []
     for _, v in visits.iterrows():
-        hrs = pd.date_range(v['visit_start_datetime'].floor('H'), v['visit_end_datetime'].ceil('H'), freq='H')
+        # FIX: use lowercase 'h' for pandas 2.0+
+        hrs = pd.date_range(v['visit_start_datetime'].floor('h'), v['visit_end_datetime'].ceil('h'), freq='h')
         tmp = pd.DataFrame({'person_id': v['person_id'],'visit_occurrence_id': v['visit_occurrence_id'],'charttime': hrs})
         hourly_rows.append(tmp)
     grid = pd.concat(hourly_rows, ignore_index=True)
 
-    def merge_locf(grid, ts, value_col, window='4H'):
+    def merge_locf(grid, ts, value_col, window='4h'):
         if ts.empty:
             grid[value_col] = np.nan
             return grid
         
-        # DEBUG: print dtypes before merge
         if VERBOSE:
             print(f"\n--- merge_locf debug: {value_col} ---")
             print("grid dtypes:")
@@ -127,13 +127,10 @@ def compute_daily_sofa(cdm, ancestor_df=None, min_components=1, impute_missing_a
             print("ts dtypes:")
             print(ts[['person_id','visit_occurrence_id','charttime']].dtypes)
         
-        # FORCE types to match grid
         ts = ts.copy()
         ts['person_id'] = pd.to_numeric(ts['person_id'], errors='coerce').astype('Int64')
         ts['visit_occurrence_id'] = pd.to_numeric(ts['visit_occurrence_id'], errors='coerce').astype('Int64')
         ts['charttime'] = pd.to_datetime(ts['charttime'], errors='coerce')
-        
-        # Drop rows with null keys
         ts = ts.dropna(subset=['person_id','visit_occurrence_id','charttime'])
         
         ts = ts.sort_values('charttime')
@@ -148,15 +145,15 @@ def compute_daily_sofa(cdm, ancestor_df=None, min_components=1, impute_missing_a
         grid[value_col] = merged[value_col]
         return grid
 
-    grid = merge_locf(grid, map_ts, 'map', '2H')
-    grid = merge_locf(grid, gcs_ts, 'gcs', '4H')
-    grid = merge_locf(grid, pf_ts, 'pfratio', '4H')
-    grid = merge_locf(grid, bili_ts, 'bili', '48H')
-    grid = merge_locf(grid, creat_ts, 'creat', '48H')
-    grid = merge_locf(grid, plt_ts, 'plt', '48H')
-    grid = merge_locf(grid, vent.rename(columns={'procedure_datetime':'charttime'}), 'on_vent', '24H')
+    grid = merge_locf(grid, map_ts, 'map', '2h')
+    grid = merge_locf(grid, gcs_ts, 'gcs', '4h')
+    grid = merge_locf(grid, pf_ts, 'pfratio', '4h')
+    grid = merge_locf(grid, bili_ts, 'bili', '48h')
+    grid = merge_locf(grid, creat_ts, 'creat', '48h')
+    grid = merge_locf(grid, plt_ts, 'plt', '48h')
+    grid = merge_locf(grid, vent.rename(columns={'procedure_datetime':'charttime'}), 'on_vent', '24h')
     grid['on_vent'] = grid['on_vent'].fillna(0).astype(int)
-    grid = merge_locf(grid, rrt.rename(columns={'procedure_datetime':'charttime'}), 'on_rrt', '24H')
+    grid = merge_locf(grid, rrt.rename(columns={'procedure_datetime':'charttime'}), 'on_rrt', '24h')
     grid['on_rrt'] = grid['on_rrt'].fillna(0).astype(int)
 
     vaso_hourly = []
@@ -164,7 +161,8 @@ def compute_daily_sofa(cdm, ancestor_df=None, min_components=1, impute_missing_a
         for _, v in visits.iterrows():
             v_vaso = vaso[vaso['visit_occurrence_id'] == v['visit_occurrence_id']]
             if v_vaso.empty: continue
-            hrs = pd.date_range(v['visit_start_datetime'].floor('H'), v['visit_end_datetime'].ceil('H'), freq='H')
+            # FIX: use lowercase 'h'
+            hrs = pd.date_range(v['visit_start_datetime'].floor('h'), v['visit_end_datetime'].ceil('h'), freq='h')
             for hr in hrs:
                 active = v_vaso[(v_vaso['start'] <= hr) & (v_vaso['end'] >= hr)]
                 if not active.empty:
