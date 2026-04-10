@@ -67,6 +67,7 @@ def get_measurements(cdm, seed_keys, domain=None, ancestor_df=None):
         return pd.DataFrame(columns=['person_id','visit_occurrence_id','charttime','value'])
     df = df[['person_id','visit_occurrence_id','measurement_datetime','value_as_number','unit_concept_id']]
     df = df.rename(columns={'measurement_datetime':'charttime','value_as_number':'value'})
+    df['charttime'] = pd.to_datetime(df['charttime'])
     if domain:
         df = convert_units(df, 'value', 'unit_concept_id', domain)
     return df[['person_id','visit_occurrence_id','charttime','value']].dropna(subset=['value'])
@@ -139,9 +140,12 @@ def get_vasopressors(cdm, ancestor_df=None):
         return pd.DataFrame()
     v = v[['person_id','visit_occurrence_id','drug_exposure_start_datetime','drug_exposure_end_datetime','quantity','dose_unit_concept_id','route_concept_id','drug_concept_id']]
     v = v.rename(columns={'drug_exposure_start_datetime':'start','drug_exposure_end_datetime':'end'})
+    v['start'] = pd.to_datetime(v['start'])
+    v['end'] = pd.to_datetime(v['end'])
     weight = cdm['measurement']
     weight = weight[weight['measurement_concept_id'].isin([3025315, 3013762])]
     weight = weight[['person_id','measurement_datetime','value_as_number']].rename(columns={'measurement_datetime':'wt_time','value_as_number':'weight_kg'})
+    weight['wt_time'] = pd.to_datetime(weight['wt_time'])
     v = pd.merge_asof(v.sort_values('start'), weight.sort_values('wt_time'), by='person_id', left_on='start', right_on='wt_time', direction='backward', tolerance=pd.Timedelta('24h'))
     v['duration_hr'] = (pd.to_datetime(v['end']) - pd.to_datetime(v['start'])).dt.total_seconds()/3600
     v['rate_mcg_per_min'] = np.where(v['duration_hr']>0, v['quantity']*1000 / (v['duration_hr']*60), np.nan)
