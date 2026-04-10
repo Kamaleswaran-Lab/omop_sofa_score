@@ -64,7 +64,9 @@ def get_measurements(cdm, seed_keys, domain=None, ancestor_df=None):
     m = cdm['measurement']
     df = m[m['measurement_concept_id'].isin(concept_ids)].copy()
     if df.empty:
-        return pd.DataFrame(columns=['person_id','visit_occurrence_id','charttime','value'])
+        empty = pd.DataFrame(columns=['person_id','visit_occurrence_id','charttime','value'])
+        empty['charttime'] = pd.to_datetime(empty['charttime'])
+        return empty
     df = df[['person_id','visit_occurrence_id','measurement_datetime','value_as_number','unit_concept_id']]
     df = df.rename(columns={'measurement_datetime':'charttime','value_as_number':'value'})
     df['charttime'] = pd.to_datetime(df['charttime'])
