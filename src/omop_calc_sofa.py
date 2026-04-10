@@ -91,29 +91,32 @@ def compute_daily_sofa(cdm, ancestor_df=None, min_components=1, impute_missing_a
     vent = cdm['procedure_occurrence']
     vent = vent[vent['procedure_concept_id'].isin(vent_ids)][['person_id','visit_occurrence_id','procedure_datetime']]
     vent['on_vent'] = 1
-    vent['person_id'] = pd.to_numeric(vent['person_id'], errors='coerce').astype('Int64')
-    vent['visit_occurrence_id'] = pd.to_numeric(vent['visit_occurrence_id'], errors='coerce').astype('Int64')
+    vent['person_id'] = pd.to_numeric(vent['person_id'], errors='coerce')
+    vent['visit_occurrence_id'] = pd.to_numeric(vent['visit_occurrence_id'], errors='coerce')
     vent['procedure_datetime'] = pd.to_datetime(vent['procedure_datetime'], errors='coerce')
 
     rrt_ids = expand_concepts(ancestor_df, CONCEPT_SEEDS['rrt_procedure'])
     rrt = cdm['procedure_occurrence']
     rrt = rrt[rrt['procedure_concept_id'].isin(rrt_ids)][['person_id','visit_occurrence_id','procedure_datetime']]
     rrt['on_rrt'] = 1
-    rrt['person_id'] = pd.to_numeric(rrt['person_id'], errors='coerce').astype('Int64')
-    rrt['visit_occurrence_id'] = pd.to_numeric(rrt['visit_occurrence_id'], errors='coerce').astype('Int64')
+    rrt['person_id'] = pd.to_numeric(rrt['person_id'], errors='coerce')
+    rrt['visit_occurrence_id'] = pd.to_numeric(rrt['visit_occurrence_id'], errors='coerce')
     rrt['procedure_datetime'] = pd.to_datetime(rrt['procedure_datetime'], errors='coerce')
 
     visits = cdm['visit_occurrence'][['person_id','visit_occurrence_id','visit_start_datetime','visit_end_datetime']].copy()
     visits['visit_start_datetime'] = pd.to_datetime(visits['visit_start_datetime'])
     visits['visit_end_datetime'] = pd.to_datetime(visits['visit_end_datetime'].fillna(visits['visit_start_datetime'] + pd.Timedelta(days=30)))
+    visits['person_id'] = pd.to_numeric(visits['person_id'], errors='coerce')
+    visits['visit_occurrence_id'] = pd.to_numeric(visits['visit_occurrence_id'], errors='coerce')
 
     hourly_rows = []
     for _, v in visits.iterrows():
-        # FIX: use lowercase 'h' for pandas 2.0+
         hrs = pd.date_range(v['visit_start_datetime'].floor('h'), v['visit_end_datetime'].ceil('h'), freq='h')
         tmp = pd.DataFrame({'person_id': v['person_id'],'visit_occurrence_id': v['visit_occurrence_id'],'charttime': hrs})
         hourly_rows.append(tmp)
     grid = pd.concat(hourly_rows, ignore_index=True)
+    grid['person_id'] = grid['person_id'].astype('int64')
+    grid['visit_occurrence_id'] = grid['visit_occurrence_id'].astype('int64')
 
     def merge_locf(grid, ts, value_col, window='4h'):
         if ts.empty:
@@ -122,16 +125,16 @@ def compute_daily_sofa(cdm, ancestor_df=None, min_components=1, impute_missing_a
         
         if VERBOSE:
             print(f"\n--- merge_locf debug: {value_col} ---")
-            print("grid dtypes:")
-            print(grid[['person_id','visit_occurrence_id','charttime']].dtypes)
-            print("ts dtypes:")
-            print(ts[['person_id','visit_occurrence_id','charttime']].dtypes)
         
         ts = ts.copy()
-        ts['person_id'] = pd.to_numeric(ts['person_id'], errors='coerce').astype('Int64')
-        ts['visit_occurrence_id'] = pd.to_numeric(ts['visit_occurrence_id'], errors='coerce').astype('Int64')
+        ts['person_id'] = pd.to_numeric(ts['person_id'], errors='coerce').astype('int64')
+        ts['visit_occurrence_id'] = pd.to_numeric(ts['visit_occurrence_id'], errors='coerce').astype('int64')
         ts['charttime'] = pd.to_datetime(ts['charttime'], errors='coerce')
         ts = ts.dropna(subset=['person_id','visit_occurrence_id','charttime'])
+        
+        if VERBOSE:
+            print(f"grid dtypes: {grid[['person_id','visit_occurrence_id']].dtypes.tolist()}")
+            print(f"ts dtypes: {ts[['person_id','visit_occurrence_id']].dtypes.tolist()}")
         
         ts = ts.sort_values('charttime')
         merged = pd.merge_asof(
@@ -161,7 +164,6 @@ def compute_daily_sofa(cdm, ancestor_df=None, min_components=1, impute_missing_a
         for _, v in visits.iterrows():
             v_vaso = vaso[vaso['visit_occurrence_id'] == v['visit_occurrence_id']]
             if v_vaso.empty: continue
-            # FIX: use lowercase 'h'
             hrs = pd.date_range(v['visit_start_datetime'].floor('h'), v['visit_end_datetime'].ceil('h'), freq='h')
             for hr in hrs:
                 active = v_vaso[(v_vaso['start'] <= hr) & (v_vaso['end'] >= hr)]
@@ -175,6 +177,8 @@ def compute_daily_sofa(cdm, ancestor_df=None, min_components=1, impute_missing_a
                     vaso_hourly.append({'person_id': v['person_id'],'visit_occurrence_id': v['visit_occurrence_id'],'charttime': hr,'on_vaso_any':1, **rates})
     vaso_df = pd.DataFrame(vaso_hourly)
     if not vaso_df.empty:
+        vaso_df['person_id'] = vaso_df['person_id'].astype('int64')
+        vaso_df['visit_occurrence_id'] = vaso_df['visit_occurrence_id'].astype('int64')
         grid = grid.merge(vaso_df, on=['person_id','visit_occurrence_id','charttime'], how='left')
     else:
         for col in ['norepi','epi','dopamine','dobutamine','on_vaso_any']: grid[col] = np.nan
@@ -186,6 +190,8 @@ def compute_daily_sofa(cdm, ancestor_df=None, min_components=1, impute_missing_a
     grid['coag_sofa'] = grid['plt'].apply(score_coagulation)
 
     grid['chartdate'] = grid['charttime'].dt.floor('D')
+    uo_daily['person_id'] = uo_daily['person_id'].astype('int64')
+    uo_daily['visit_occurrence_id'] = uo_daily['visit_occurrence_id'].astype('int64')
     grid = grid.merge(uo_daily, on=['person_id','visit_occurrence_id','chartdate'], how='left')
     grid['renal_sofa'] = grid.apply(lambda r: score_renal(r['creat'], r.get('uo_24h_ml', np.nan), r['on_rrt']), axis=1)
 
