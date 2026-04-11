@@ -1,10 +1,25 @@
 import pandas as pd
 import numpy as np
-from omop_utils import get_cultures, get_antibiotics, expand_concepts, CONCEPT_SEEDS
 
 def compute_suspected_infection(cdm, ancestor_df=None):
+    from omop_utils import get_cultures, get_antibiotics
     cultures = get_cultures(cdm, ancestor_df)
-    abx = get_antibiotics(cdm, ancestor_df)
+    antibiotics = get_antibiotics(cdm, ancestor_df)
+    if cultures.empty or antibiotics.empty:
+        return pd.DataFrame(columns=['person_id','visit_occurrence_id','suspicion_time'])
+    suspected = []
+    for _, cult in cultures.iterrows():
+        abx_after = antibiotics[(antibiotics['person_id'] == cult['person_id']) & (antibiotics['visit_occurrence_id'] == cult['visit_occurrence_id']) & (antibiotics['abx_time'] >= cult['culture_time']) & (antibiotics['abx_time'] <= cult['culture_time'] + pd.Timedelta(hours=72))]
+        abx_before = antibiotics[(antibiotics['person_id'] == cult['person_id']) & (antibiotics['visit_occurrence_id'] == cult['visit_occurrence_id']) & (antibiotics['abx_time'] < cult['culture_time']) & (antibiotics['abx_time'] >= cult['culture_time'] - pd.Timedelta(hours=24))]
+        if not abx_after.empty or not abx_before.empty:
+            times = [cult['culture_time']]
+            if not abx_after.empty: times.append(abx_after['abx_time'].min())
+            if not abx_before.empty: times.append(abx_before['abx_time'].min())
+            suspicion_time = min(times)
+            suspected.append({'person_id': cult['person_id'], 'visit_occurrence_id': cult['visit_occurrence_id'], 'suspicion_time': suspicion_time, 'culture_time': cult['culture_time']})
+    result = pd.DataFrame(suspected).drop_duplicates()
+    print(f"Found {len(result)} suspected infection events")
+    return result
 
     if cultures.empty or abx.empty:
         return pd.DataFrame(columns=['person_id','visit_occurrence_id','t_inf','culture_time','abx_time'])

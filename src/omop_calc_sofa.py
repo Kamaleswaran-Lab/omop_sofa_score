@@ -1,10 +1,7 @@
 import pandas as pd
 import numpy as np
 from datetime import timedelta
-from omop_utils import (
-    get_measurements, derive_map, derive_gcs, get_paired_pao2_fio2,
-    get_urine_output_24h, get_vasopressors, CONCEPT_SEEDS, expand_concepts, normalize_cdm, VERBOSE, vprint
-)
+from omop_utils import get_measurements, derive_map, derive_gcs, get_paired_pao2_fio2, get_urine_output_24h, get_vasopressors, CONCEPT_SEEDS, expand_concepts, normalize_cdm, VERBOSE, vprint
 
 def score_respiratory(pfratio, on_vent):
     if pd.isna(pfratio): return np.nan
@@ -21,8 +18,7 @@ def score_cardiovascular(map_val, vaso_rates, on_vaso_any=False):
     dobu = vaso_rates.get('dobutamine', 0) or 0
     total_norepi_eq = norepi + epi
     has_rate_data = any([not pd.isna(x) and x>0 for x in [norepi, epi, dopa, dobu]])
-    if not has_rate_data and on_vaso_any:
-        return 3
+    if not has_rate_data and on_vaso_any: return 3
     if total_norepi_eq == 0 and dobu == 0 and dopa == 0:
         if pd.isna(map_val) or map_val >= 70: return 0
         return 1
@@ -72,11 +68,10 @@ def score_coagulation(plt):
     if plt > 20: return 3
     return 4
 
-def compute_daily_sofa(cdm, ancestor_df=None, min_components=1, impute_missing_as_zero=False):
+def compute_daily_sofa(cdm, ancestor_df=None, min_components=1, impute_missing_as_zero=True):
     cdm = normalize_cdm(cdm)
     if ancestor_df is not None:
         ancestor_df.columns = [c.lower() for c in ancestor_df.columns]
-
     print("Extracting measurements...")
     map_ts = derive_map(cdm, ancestor_df)
     gcs_ts = derive_gcs(cdm, ancestor_df)
@@ -236,7 +231,6 @@ def compute_daily_sofa(cdm, ancestor_df=None, min_components=1, impute_missing_a
     grid['on_vent'] = grid['on_vent'].fillna(0).astype(int)
     grid = merge_locf(grid, rrt[['person_id', 'visit_occurrence_id', 'charttime', 'on_rrt']], 'on_rrt', '24h')
     grid['on_rrt'] = grid['on_rrt'].fillna(0).astype(int)
-
     vaso_hourly = []
     if not vaso.empty:
         vaso = vaso.copy()
@@ -303,7 +297,6 @@ def compute_daily_sofa(cdm, ancestor_df=None, min_components=1, impute_missing_a
     grid['neuro_sofa'] = grid['gcs'].apply(score_neurologic)
     grid['hepatic_sofa'] = grid['bili'].apply(score_hepatic)
     grid['coag_sofa'] = grid['plt'].apply(score_coagulation)
-
     grid['chartdate'] = grid['charttime'].dt.floor('D')
     uo_daily = uo_daily.copy()
     uo_daily.columns = [c.lower() for c in uo_daily.columns]
@@ -331,13 +324,11 @@ def compute_daily_sofa(cdm, ancestor_df=None, min_components=1, impute_missing_a
 
     comp_cols = ['resp_sofa', 'cardio_sofa', 'neuro_sofa', 'hepatic_sofa', 'renal_sofa', 'coag_sofa']
     daily['components_present'] = daily[comp_cols].notna().sum(axis=1)
-
     if impute_missing_as_zero:
         daily['total_sofa'] = daily[comp_cols].fillna(0).sum(axis=1)
     else:
         daily['total_sofa'] = daily[comp_cols].sum(axis=1, min_count=min_components)
         daily.loc[daily['components_present'] < min_components, 'total_sofa'] = np.nan
-
     missing_rate = daily[comp_cols].isna().mean().round(2)
     print(f"Missingness per component: {missing_rate.to_dict()}")
 
