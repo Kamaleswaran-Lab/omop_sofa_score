@@ -2,7 +2,7 @@ import pandas as pd
 import numpy as np
 
 def compute_suspected_infection(cdm, ancestor_df=None):
-    from .omop_utils import get_cultures, get_antibiotics
+    from omop_utils import get_cultures, get_antibiotics
     cultures = get_cultures(cdm, ancestor_df)
     antibiotics = get_antibiotics(cdm, ancestor_df)
     if cultures.empty or antibiotics.empty:
@@ -33,7 +33,7 @@ def compute_suspected_infection(cdm, ancestor_df=None):
     return result
 
 def evaluate_sepsis3(hourly_sofa, suspected_infections, cdm, ancestor_df=None):
-    from .omop_utils import get_chronic_conditions
+    from omop_utils import get_chronic_conditions
     if hourly_sofa.empty or suspected_infections.empty:
         return pd.DataFrame()
     chronic = get_chronic_conditions(cdm, ancestor_df)
