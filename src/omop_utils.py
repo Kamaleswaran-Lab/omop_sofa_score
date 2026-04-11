@@ -291,3 +291,23 @@ def get_chronic_conditions(cdm, ancestor_df=None):
     cirr['has_cirrhosis'] = 1
     chronic = pd.merge(esrd[['person_id','has_esrd']], cirr[['person_id','has_cirrhosis']], on='person_id', how='outer').fillna(0)
     return chronic
+
+def print_dataset_summary(cdm):
+    """Print comprehensive dataset statistics"""
+    print("\n" + "="*70)
+    print("OMOP CDM DATASET SUMMARY")
+    print("="*70)
+    
+    for table_name in ['person', 'visit_occurrence', 'measurement', 'drug_exposure', 'procedure_occurrence', 'condition_occurrence', 'specimen']:
+        df = cdm.get(table_name)
+        if df is not None and not df.empty:
+            patients = df['person_id'].nunique() if 'person_id' in df.columns else 0
+            print(f"{table_name:25s}: {len(df):>10,} rows, {patients:>8,} patients")
+    
+    # ICU-specific
+    visits = cdm['visit_occurrence']
+    if 'visit_concept_id' in visits.columns:
+        icu_visits = visits[visits['visit_concept_id'].isin([9201, 262])]
+        print(f"\nICU visits: {len(icu_visits):,} ({icu_visits['person_id'].nunique():,} patients)")
+    
+    print("="*70 + "\n")
