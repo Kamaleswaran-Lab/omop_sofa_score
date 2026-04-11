@@ -1,7 +1,7 @@
 import pandas as pd
 import numpy as np
 from datetime import timedelta
-from .omop_utils import get_measurements, derive_map, derive_gcs, get_paired_pao2_fio2, get_urine_output_24h, get_vasopressors, CONCEPT_SEEDS, expand_concepts, normalize_cdm, VERBOSE, vprint
+from omop_utils import get_measurements, derive_map, derive_gcs, get_paired_pao2_fio2, get_urine_output_24h, get_vasopressors, CONCEPT_SEEDS, expand_concepts, normalize_cdm, VERBOSE, vprint
 
 def score_respiratory(pfratio, on_vent):
     if pd.isna(pfratio): return np.nan
