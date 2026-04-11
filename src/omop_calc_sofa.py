@@ -1,10 +1,7 @@
 import pandas as pd
 import numpy as np
 from datetime import timedelta
-from omop_utils import (
-    get_measurements, derive_map, derive_gcs, get_paired_pao2_fio2,
-    get_urine_output_24h, get_vasopressors, CONCEPT_SEEDS, expand_concepts, normalize_cdm, VERBOSE, vprint
-)
+from omop_utils import get_measurements, derive_map, derive_gcs, get_paired_pao2_fio2, get_urine_output_24h, get_vasopressors, CONCEPT_SEEDS, expand_concepts, normalize_cdm, VERBOSE, vprint
 
 def score_respiratory(pfratio, on_vent):
     if pd.isna(pfratio): return np.nan
@@ -21,8 +18,7 @@ def score_cardiovascular(map_val, vaso_rates, on_vaso_any=False):
     dobu = vaso_rates.get('dobutamine', 0) or 0
     total_norepi_eq = norepi + epi
     has_rate_data = any([not pd.isna(x) and x>0 for x in [norepi, epi, dopa, dobu]])
-    if not has_rate_data and on_vaso_any:
-        return 3
+    if not has_rate_data and on_vaso_any: return 3
     if total_norepi_eq == 0 and dobu == 0 and dopa == 0:
         if pd.isna(map_val) or map_val >= 70: return 0
         return 1
@@ -72,11 +68,10 @@ def score_coagulation(plt):
     if plt > 20: return 3
     return 4
 
-def compute_daily_sofa(cdm, ancestor_df=None, min_components=1, impute_missing_as_zero=False):
+def compute_daily_sofa(cdm, ancestor_df=None, min_components=1, impute_missing_as_zero=True):
     cdm = normalize_cdm(cdm)
     if ancestor_df is not None:
         ancestor_df.columns = [c.lower() for c in ancestor_df.columns]
-
     print("Extracting measurements...")
     map_ts = derive_map(cdm, ancestor_df)
     gcs_ts = derive_gcs(cdm, ancestor_df)
@@ -86,7 +81,6 @@ def compute_daily_sofa(cdm, ancestor_df=None, min_components=1, impute_missing_a
     plt_ts = get_measurements(cdm, ['platelets'], domain='platelets', ancestor_df=ancestor_df)
     uo_daily = get_urine_output_24h(cdm, ancestor_df)
     vaso = get_vasopressors(cdm, ancestor_df)
-
     vent_ids = expand_concepts(ancestor_df, CONCEPT_SEEDS['mech_vent'])
     vent = cdm['procedure_occurrence']
     vent = vent[vent['procedure_concept_id'].isin(vent_ids)][['person_id','visit_occurrence_id','procedure_datetime']]
@@ -94,7 +88,6 @@ def compute_daily_sofa(cdm, ancestor_df=None, min_components=1, impute_missing_a
     vent['person_id'] = pd.to_numeric(vent['person_id'], errors='coerce')
     vent['visit_occurrence_id'] = pd.to_numeric(vent['visit_occurrence_id'], errors='coerce')
     vent['procedure_datetime'] = pd.to_datetime(vent['procedure_datetime'], errors='coerce')
-
     rrt_ids = expand_concepts(ancestor_df, CONCEPT_SEEDS['rrt_procedure'])
     rrt = cdm['procedure_occurrence']
     rrt = rrt[rrt['procedure_concept_id'].isin(rrt_ids)][['person_id','visit_occurrence_id','procedure_datetime']]
@@ -102,13 +95,11 @@ def compute_daily_sofa(cdm, ancestor_df=None, min_components=1, impute_missing_a
     rrt['person_id'] = pd.to_numeric(rrt['person_id'], errors='coerce')
     rrt['visit_occurrence_id'] = pd.to_numeric(rrt['visit_occurrence_id'], errors='coerce')
     rrt['procedure_datetime'] = pd.to_datetime(rrt['procedure_datetime'], errors='coerce')
-
     visits = cdm['visit_occurrence'][['person_id','visit_occurrence_id','visit_start_datetime','visit_end_datetime']].copy()
     visits['visit_start_datetime'] = pd.to_datetime(visits['visit_start_datetime'])
     visits['visit_end_datetime'] = pd.to_datetime(visits['visit_end_datetime'].fillna(visits['visit_start_datetime'] + pd.Timedelta(days=30)))
     visits['person_id'] = pd.to_numeric(visits['person_id'], errors='coerce')
     visits['visit_occurrence_id'] = pd.to_numeric(visits['visit_occurrence_id'], errors='coerce')
-
     hourly_rows = []
     for _, v in visits.iterrows():
         hrs = pd.date_range(v['visit_start_datetime'].floor('h'), v['visit_end_datetime'].ceil('h'), freq='h')
@@ -117,38 +108,20 @@ def compute_daily_sofa(cdm, ancestor_df=None, min_components=1, impute_missing_a
     grid = pd.concat(hourly_rows, ignore_index=True)
     grid['person_id'] = grid['person_id'].astype('int64')
     grid['visit_occurrence_id'] = grid['visit_occurrence_id'].astype('int64')
-
     def merge_locf(grid, ts, value_col, window='4h'):
         if ts.empty:
             grid[value_col] = np.nan
             return grid
-        
-        if VERBOSE:
-            print(f"\n--- merge_locf debug: {value_col} ---")
-        
         ts = ts.copy()
         ts['person_id'] = pd.to_numeric(ts['person_id'], errors='coerce').astype('int64')
         ts['visit_occurrence_id'] = pd.to_numeric(ts['visit_occurrence_id'], errors='coerce').astype('int64')
         ts['charttime'] = pd.to_datetime(ts['charttime'], errors='coerce')
         ts = ts.dropna(subset=['person_id','visit_occurrence_id','charttime'])
-        
-        if VERBOSE:
-            print(f"grid dtypes: {grid[['person_id','visit_occurrence_id']].dtypes.tolist()}")
-            print(f"ts dtypes: {ts[['person_id','visit_occurrence_id']].dtypes.tolist()}")
-        
         ts = ts.sort_values('charttime')
-        merged = pd.merge_asof(
-            grid.sort_values('charttime'),
-            ts,
-            by=['person_id','visit_occurrence_id'],
-            on='charttime',
-            direction='backward',
-            tolerance=pd.Timedelta(window)
-        )
+        merged = pd.merge_asof(grid.sort_values('charttime'), ts, by=['person_id','visit_occurrence_id'], on='charttime', direction='backward', tolerance=pd.Timedelta(window))
         grid[value_col] = merged[value_col]
         return grid
-
-    grid = merge_locf(grid, map_ts, 'map', '2h')
+    grid = merge_locf(grid, map_ts, 'map', '8h')
     grid = merge_locf(grid, gcs_ts, 'gcs', '4h')
     grid = merge_locf(grid, pf_ts, 'pfratio', '4h')
     grid = merge_locf(grid, bili_ts, 'bili', '48h')
@@ -158,7 +131,6 @@ def compute_daily_sofa(cdm, ancestor_df=None, min_components=1, impute_missing_a
     grid['on_vent'] = grid['on_vent'].fillna(0).astype(int)
     grid = merge_locf(grid, rrt.rename(columns={'procedure_datetime':'charttime'}), 'on_rrt', '24h')
     grid['on_rrt'] = grid['on_rrt'].fillna(0).astype(int)
-
     vaso_hourly = []
     if not vaso.empty:
         for _, v in visits.iterrows():
@@ -182,31 +154,26 @@ def compute_daily_sofa(cdm, ancestor_df=None, min_components=1, impute_missing_a
         grid = grid.merge(vaso_df, on=['person_id','visit_occurrence_id','charttime'], how='left')
     else:
         for col in ['norepi','epi','dopamine','dobutamine','on_vaso_any']: grid[col] = np.nan
-
     grid['resp_sofa'] = grid.apply(lambda r: score_respiratory(r['pfratio'], r['on_vent']), axis=1)
     grid['cardio_sofa'] = grid.apply(lambda r: score_cardiovascular(r['map'], {'norepi': r.get('norepi',0), 'epi': r.get('epi',0), 'dopamine': r.get('dopamine',0), 'dobutamine': r.get('dobutamine',0)}, on_vaso_any=bool(r.get('on_vaso_any',0))), axis=1)
     grid['neuro_sofa'] = grid['gcs'].apply(score_neurologic)
     grid['hepatic_sofa'] = grid['bili'].apply(score_hepatic)
     grid['coag_sofa'] = grid['plt'].apply(score_coagulation)
-
     grid['chartdate'] = grid['charttime'].dt.floor('D')
     uo_daily['person_id'] = uo_daily['person_id'].astype('int64')
     uo_daily['visit_occurrence_id'] = uo_daily['visit_occurrence_id'].astype('int64')
     grid = grid.merge(uo_daily, on=['person_id','visit_occurrence_id','chartdate'], how='left')
     grid['renal_sofa'] = grid.apply(lambda r: score_renal(r['creat'], r.get('uo_24h_ml', np.nan), r['on_rrt']), axis=1)
-
     daily = grid.groupby(['person_id','visit_occurrence_id','chartdate']).agg({'resp_sofa':'max','cardio_sofa':'max','neuro_sofa':'max','hepatic_sofa':'max','renal_sofa':'max','coag_sofa':'max'}).reset_index()
-
     comp_cols = ['resp_sofa','cardio_sofa','neuro_sofa','hepatic_sofa','renal_sofa','coag_sofa']
     daily['components_present'] = daily[comp_cols].notna().sum(axis=1)
-
     if impute_missing_as_zero:
         daily_filled = daily[comp_cols].fillna(0)
         daily['total_sofa'] = daily_filled.sum(axis=1)
     else:
         daily['total_sofa'] = daily[comp_cols].sum(axis=1, min_count=min_components)
         daily.loc[daily['components_present'] < min_components, 'total_sofa'] = np.nan
-
     missing_rate = daily[comp_cols].isna().mean().round(2)
     print(f"Missingness per component: {missing_rate.to_dict()}")
+    print(f"Using impute_missing_as_zero={impute_missing_as_zero} for ward-appropriate scoring")
     return daily[['person_id','visit_occurrence_id','chartdate','total_sofa','components_present'] + comp_cols]
