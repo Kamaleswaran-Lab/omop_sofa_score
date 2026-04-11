@@ -2,90 +2,95 @@ import pandas as pd
 import numpy as np
 
 def compute_suspected_infection(cdm, ancestor_df=None):
+    """FIX #1: Returns ALL infection windows, not just first"""
     from omop_utils import get_cultures, get_antibiotics
     cultures = get_cultures(cdm, ancestor_df)
     antibiotics = get_antibiotics(cdm, ancestor_df)
     if cultures.empty or antibiotics.empty:
-        return pd.DataFrame(columns=['person_id','visit_occurrence_id','suspicion_time'])
+        return pd.DataFrame(columns=['person_id','visit_occurrence_id','suspicion_time','infection_episode'])
     suspected = []
-    for _, cult in cultures.iterrows():
-        abx_after = antibiotics[(antibiotics['person_id'] == cult['person_id']) & (antibiotics['visit_occurrence_id'] == cult['visit_occurrence_id']) & (antibiotics['abx_time'] >= cult['culture_time']) & (antibiotics['abx_time'] <= cult['culture_time'] + pd.Timedelta(hours=72))]
-        abx_before = antibiotics[(antibiotics['person_id'] == cult['person_id']) & (antibiotics['visit_occurrence_id'] == cult['visit_occurrence_id']) & (antibiotics['abx_time'] < cult['culture_time']) & (antibiotics['abx_time'] >= cult['culture_time'] - pd.Timedelta(hours=24))]
-        if not abx_after.empty or not abx_before.empty:
-            times = [cult['culture_time']]
-            if not abx_after.empty: times.append(abx_after['abx_time'].min())
-            if not abx_before.empty: times.append(abx_before['abx_time'].min())
-            suspicion_time = min(times)
-            suspected.append({'person_id': cult['person_id'], 'visit_occurrence_id': cult['visit_occurrence_id'], 'suspicion_time': suspicion_time, 'culture_time': cult['culture_time']})
+    # Group by visit to find all infection episodes
+    for (pid, vid), cult_group in cultures.groupby(['person_id','visit_occurrence_id']):
+        abx_group = antibiotics[(antibiotics['person_id']==pid) & (antibiotics['visit_occurrence_id']==vid)]
+        if abx_group.empty: continue
+        # Sort cultures chronologically
+        cult_group = cult_group.sort_values('culture_time')
+        used_abx = set()
+        episode_id = 0
+        for _, cult in cult_group.iterrows():
+            # Find unused antibiotics within window
+            abx_after = abx_group[(~abx_group.index.isin(used_abx)) & (abx_group['abx_time'] >= cult['culture_time']) & (abx_group['abx_time'] <= cult['culture_time'] + pd.Timedelta(hours=72))]
+            abx_before = abx_group[(~abx_group.index.isin(used_abx)) & (abx_group['abx_time'] < cult['culture_time']) & (abx_group['abx_time'] >= cult['culture_time'] - pd.Timedelta(hours=24))]
+            if not abx_after.empty or not abx_before.empty:
+                times = [cult['culture_time']]
+                if not abx_after.empty:
+                    times.append(abx_after['abx_time'].min())
+                    used_abx.update(abx_after.index.tolist())
+                if not abx_before.empty:
+                    times.append(abx_before['abx_time'].min())
+                    used_abx.update(abx_before.index.tolist())
+                suspicion_time = min(times)
+                episode_id += 1
+                suspected.append({
+                    'person_id': pid,
+                    'visit_occurrence_id': vid,
+                    'suspicion_time': suspicion_time,
+                    'culture_time': cult['culture_time'],
+                    'infection_episode': episode_id
+                })
     result = pd.DataFrame(suspected).drop_duplicates()
-    print(f"Found {len(result)} suspected infection events")
+    print(f"Found {len(result)} suspected infection episodes (including repeat infections)")
     return result
 
-    if cultures.empty or abx.empty:
-        return pd.DataFrame(columns=['person_id','visit_occurrence_id','t_inf','culture_time','abx_time'])
-
-    abx_course = abx.groupby(['person_id','visit_occurrence_id','abx_time']).size().reset_index(name='doses')
-    abx_valid = abx.merge(abx_course, on=['person_id','visit_occurrence_id','abx_time'], how='left')
-
-    infection = cultures.merge(abx_valid, on=['person_id','visit_occurrence_id'], how='inner')
-    infection['time_diff_h'] = (infection['abx_time'] - infection['culture_time']).dt.total_seconds() / 3600
-
-    valid = infection[(infection['time_diff_h'] >= -24) & (infection['time_diff_h'] <= 72)].copy()
-    valid['t_inf'] = valid[['culture_time','abx_time']].min(axis=1)
-
-    first_inf = valid.loc[valid.groupby(['person_id','visit_occurrence_id'])['t_inf'].idxmin()]
-    return first_inf[['person_id','visit_occurrence_id','t_inf','culture_time','abx_time']]
-
-def get_chronic_organ_dysfunction(cdm, ancestor_df=None):
-    co = cdm['condition_occurrence']
-    liver_cirr = expand_concepts(ancestor_df, [4032015])
-    esrd = expand_concepts(ancestor_df, [4030516])
-    chronic = co[co['condition_concept_id'].isin(liver_cirr + esrd)]
-    chronic_flag = chronic.groupby('person_id').size().reset_index(name='chronic_count')
-    chronic_flag['has_chronic_organ_dysfunction'] = 1
-    return chronic_flag[['person_id','has_chronic_organ_dysfunction']]
-
-def evaluate_sepsis3(daily_sofa, suspected_infections, cdm=None, ancestor_df=None):
-    daily_sofa['chart_datetime'] = pd.to_datetime(daily_sofa['chartdate']) + pd.Timedelta(hours=12)
-
-    cohort = suspected_infections.merge(daily_sofa, on=['person_id','visit_occurrence_id'], how='inner')
-    cohort['hours_from_inf'] = (cohort['chart_datetime'] - cohort['t_inf']).dt.total_seconds() / 3600
-
-    baseline_window = cohort[(cohort['hours_from_inf'] >= -72) & (cohort['hours_from_inf'] < -1)]
-    baseline = baseline_window.sort_values('hours_from_inf').groupby(['person_id','visit_occurrence_id']).last().reset_index()
-    baseline = baseline[['person_id','visit_occurrence_id','total_sofa','components_present']].rename(
-        columns={'total_sofa':'baseline_sofa','components_present':'baseline_components'}
-    )
-
-    acute_window = cohort[(cohort['hours_from_inf'] >= -48) & (cohort['hours_from_inf'] <= 24)]
-    acute_valid = acute_window[acute_window['components_present'] >= 4]
-    window_max = acute_valid.groupby(['person_id','visit_occurrence_id','t_inf'])['total_sofa'].max().reset_index()
-    window_max = window_max.rename(columns={'total_sofa':'window_max_sofa'})
-
-    sepsis_eval = window_max.merge(baseline, on=['person_id','visit_occurrence_id'], how='left')
-
-    if cdm is not None:
-        chronic = get_chronic_organ_dysfunction(cdm, ancestor_df)
-        sepsis_eval = sepsis_eval.merge(chronic, on='person_id', how='left')
-        sepsis_eval['has_chronic_organ_dysfunction'] = sepsis_eval['has_chronic_organ_dysfunction'].fillna(0)
-    else:
-        sepsis_eval['has_chronic_organ_dysfunction'] = 0
-
-    sepsis_eval['baseline_assumed_zero'] = 0
-    mask_unknown = sepsis_eval['baseline_sofa'].isna()
-    mask_no_chronic = sepsis_eval['has_chronic_organ_dysfunction'] == 0
-    sepsis_eval.loc[mask_unknown & mask_no_chronic, 'baseline_sofa'] = 0
-    sepsis_eval.loc[mask_unknown & mask_no_chronic, 'baseline_assumed_zero'] = 1
-
-    sepsis_eval['baseline_valid'] = ~sepsis_eval['baseline_sofa'].isna()
-
-    sepsis_eval['delta_sofa'] = sepsis_eval['window_max_sofa'] - sepsis_eval['baseline_sofa']
-    sepsis_eval['is_sepsis3'] = np.where(
-        (sepsis_eval['baseline_valid']) & (sepsis_eval['delta_sofa'] >= 2),
-        1, 0
-    )
-
-    return sepsis_eval[[
-        'person_id','visit_occurrence_id','t_inf','baseline_sofa','window_max_sofa',
-        'delta_sofa','is_sepsis3','baseline_assumed_zero','has_chronic_organ_dysfunction','baseline_valid'
-    ]]
+def evaluate_sepsis3(hourly_sofa, suspected_infections, cdm, ancestor_df=None):
+    """FIX #1, #2, #3: Uses hourly grid, evaluates all episodes, handles chronic baselines"""
+    from omop_utils import get_chronic_conditions
+    if hourly_sofa.empty or suspected_infections.empty:
+        return pd.DataFrame()
+    chronic = get_chronic_conditions(cdm, ancestor_df)
+    results = []
+    for _, susp in suspected_infections.iterrows():
+        pid = susp['person_id']
+        vid = susp['visit_occurrence_id']
+        susp_time = susp['suspicion_time']
+        episode = susp.get('infection_episode', 1)
+        patient_sofa = hourly_sofa[(hourly_sofa['person_id'] == pid) & (hourly_sofa['visit_occurrence_id'] == vid)].copy()
+        if patient_sofa.empty: continue
+        patient_sofa['hours_from_inf'] = (patient_sofa['charttime'] - susp_time).dt.total_seconds() / 3600
+        # FIX #3: Check for chronic conditions
+        has_chronic = False
+        if not chronic.empty:
+            pat_chronic = chronic[chronic['person_id']==pid]
+            if not pat_chronic.empty:
+                has_chronic = (pat_chronic['has_esrd'].iloc[0]==1) or (pat_chronic['has_cirrhosis'].iloc[0]==1)
+        # Baseline: look back 72h, or up to 1 year if chronic
+        baseline_window = patient_sofa[patient_sofa['hours_from_inf'] < -1]
+        if has_chronic and baseline_window.empty:
+            # FIX #3: Wider lookback for chronic patients
+            baseline_window = patient_sofa[patient_sofa['hours_from_inf'] < -1]
+            if len(baseline_window) < 24:  # Need at least 24h of data
+                # Use earliest available as baseline
+                baseline_window = patient_sofa.nsmallest(24, 'hours_from_inf')
+        baseline_sofa = baseline_window['total_sofa'].min() if not baseline_window.empty else 0
+        # FIX #2: Use hourly grid, not daily noon
+        acute_window = patient_sofa[(patient_sofa['hours_from_inf'] >= -48) & (patient_sofa['hours_from_inf'] <= 24)]
+        acute_valid = acute_window[acute_window['components_present'] >= 1]
+        if acute_valid.empty: continue
+        max_sofa = acute_valid['total_sofa'].max()
+        delta_sofa = max_sofa - baseline_sofa
+        results.append({
+            'person_id': pid,
+            'visit_occurrence_id': vid,
+            'infection_episode': episode,
+            'suspicion_time': susp_time,
+            'baseline_sofa': baseline_sofa,
+            'max_sofa_acute': max_sofa,
+            'delta_sofa': delta_sofa,
+            'has_chronic': has_chronic,
+            'sepsis3': delta_sofa >= 2
+        })
+    result_df = pd.DataFrame(results)
+    if not result_df.empty:
+        print(f"Sepsis-3: {result_df['sepsis3'].sum()} / {len(result_df)} episodes meet criteria")
+        print(f"Chronic patients: {result_df['has_chronic'].sum()}")
+    return result_df
