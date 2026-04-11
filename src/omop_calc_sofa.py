@@ -1,7 +1,7 @@
 import pandas as pd
 import numpy as np
 from datetime import timedelta
-from omop_utils import get_measurements, derive_map, derive_gcs, get_paired_pao2_fio2, get_urine_output_24h, get_vasopressors, CONCEPT_SEEDS, expand_concepts, normalize_cdm, VERBOSE, vprint
+from .omop_utils import get_measurements, derive_map, derive_gcs, get_paired_pao2_fio2, get_urine_output_24h, get_vasopressors, CONCEPT_SEEDS, expand_concepts, normalize_cdm, VERBOSE, vprint
 
 def score_respiratory(pfratio, on_vent):
     if pd.isna(pfratio): return np.nan
@@ -69,7 +69,6 @@ def score_coagulation(plt):
     return 4
 
 def compute_hourly_sofa(cdm, ancestor_df=None, impute_missing_as_zero=True):
-    """FIX #2: Returns hourly grid instead of daily, preserves temporal fidelity"""
     cdm = normalize_cdm(cdm)
     if ancestor_df is not None:
         ancestor_df.columns = [c.lower() for c in ancestor_df.columns]
@@ -114,12 +113,6 @@ def compute_hourly_sofa(cdm, ancestor_df=None, impute_missing_as_zero=True):
             grid[value_col] = np.nan
             return grid
         ts = ts.copy()
-        if value_col not in ts.columns:
-            if 'value' in ts.columns:
-                ts = ts.rename(columns={'value': value_col})
-            else:
-                grid[value_col] = np.nan
-                return grid
         ts['person_id'] = pd.to_numeric(ts['person_id'], errors='coerce').astype('int64')
         ts['visit_occurrence_id'] = pd.to_numeric(ts['visit_occurrence_id'], errors='coerce').astype('int64')
         ts['charttime'] = pd.to_datetime(ts['charttime'], errors='coerce')
