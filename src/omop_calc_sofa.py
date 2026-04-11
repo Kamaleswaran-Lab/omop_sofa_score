@@ -114,6 +114,12 @@ def compute_hourly_sofa(cdm, ancestor_df=None, impute_missing_as_zero=True):
             grid[value_col] = np.nan
             return grid
         ts = ts.copy()
+        if value_col not in ts.columns:
+            if 'value' in ts.columns:
+                ts = ts.rename(columns={'value': value_col})
+            else:
+                grid[value_col] = np.nan
+                return grid
         ts['person_id'] = pd.to_numeric(ts['person_id'], errors='coerce').astype('int64')
         ts['visit_occurrence_id'] = pd.to_numeric(ts['visit_occurrence_id'], errors='coerce').astype('int64')
         ts['charttime'] = pd.to_datetime(ts['charttime'], errors='coerce')
