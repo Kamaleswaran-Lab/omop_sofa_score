@@ -1,6 +1,7 @@
 """
 chorus_concepts.py
-CHoRUS-specific OMOP concept overrides for omop_sofa_score v4.4
+CHoRUS-specific OMOP concept overrides
+Place in src/
 """
 
 VASOPRESSOR_CONCEPTS = {
@@ -32,3 +33,7 @@ def get_vasopressor_type(concept_id):
         if concept_id in ids:
             return name
     return 'unknown'
+
+def get_nee_factor(concept_id):
+    drug_type = get_vasopressor_type(concept_id)
+    return VASOPRESSOR_NEE_FACTORS.get(drug_type, 0.0)

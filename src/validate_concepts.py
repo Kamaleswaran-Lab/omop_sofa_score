@@ -1,8 +1,6 @@
 """
 validate_concepts.py
-
-Check if OMOP site has required concepts for SOFA calculation
-CHoRUS Edition - handles incomplete concept_ancestor tables
+CHoRUS Edition - validates OMOP concepts for SOFA calculation
 """
 
 import sys
@@ -210,40 +208,6 @@ class ConceptValidator:
             total = len(cat_results)
             pct = (with_data / total * 100) if total > 0 else 0
             logger.info(f"  {category:25} {with_data}/{total} concepts have data ({pct:.0f}%)")
-        
-        logger.info("")
-        logger.info("=" * 70)
-        logger.info("RECOMMENDATIONS")
-        logger.info("=" * 70)
-        
-        vaso_result = None
-        for cat_results in results.values():
-            for r in cat_results:
-                if r['concept_id'] == 1360635:
-                    vaso_result = r
-                    break
-        
-        if vaso_result and vaso_result['record_count'] == 0:
-            logger.warning("")
-            logger.warning("1. Vasopressin: No data found")
-            logger.warning("   - Cardio SOFA will be underestimated in septic shock")
-            logger.warning("   - Check CHORUS_OVERRIDES in validate_concepts.py")
-        elif vaso_result:
-            logger.info("")
-            logger.info(f"1. Vasopressin: Found {vaso_result['record_count']} records")
-        
-        fio2_result = None
-        for cat_results in results.values():
-            for r in cat_results:
-                if r['concept_id'] == 3013468:
-                    fio2_result = r
-                    break
-        
-        if fio2_result and fio2_result['record_count'] == 0:
-            logger.warning("")
-            logger.warning("2. FiO2: No data found")
-            logger.warning("   - Respiratory SOFA will be NULL for most patients")
-            logger.warning("   - This is CORRECT (no imputation), but reduces sample size")
         
         logger.info("")
         logger.info("Validation complete")
