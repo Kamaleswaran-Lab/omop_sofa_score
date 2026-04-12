@@ -11,25 +11,24 @@ from omop_utils import (
 )
 
 def _resp_score(pf, sf, vent):
-    # Prefer PaO2/FiO2, fall back to SpO2/FiO2 if PaO2 missing
     val = pf if pd.notna(pf) else sf
     if pd.isna(val): return np.nan
     if val >= 400: return 0
     if val >= 300: return 1
     if val >= 200: return 2
     if vent: return 3 if val >= 100 else 4
-    return 2 if val >= 100 else 3  # if no vent, cap at 2-3 per Vincent
+    return 2 if val >= 100 else 3
 
 def _cardio(map_v, norepi):
     if pd.notna(norepi) and norepi>0: return 3 if norepi<=0.1 else 4
     if pd.isna(map_v): return np.nan
     return 0 if map_v>=70 else 1
 
-def _neuro(gcs): 
+def _neuro(gcs):
     if pd.isna(gcs): return np.nan
     return 0 if gcs>=15 else 1 if gcs>=13 else 2 if gcs>=10 else 3 if gcs>=6 else 4
 
-def _hepatic(b): 
+def _hepatic(b):
     if pd.isna(b): return np.nan
     return 0 if b<1.2 else 1 if b<2 else 2 if b<6 else 3 if b<12 else 4
 
@@ -41,7 +40,7 @@ def _renal(cr, uo, rrt):
     if pd.isna(cr): return np.nan
     return 0 if cr<1.2 else 1 if cr<2 else 2 if cr<3.5 else 3 if cr<5 else 4
 
-def _coag(p): 
+def _coag(p):
     if pd.isna(p): return np.nan
     return 0 if p>=150 else 1 if p>=100 else 2 if p>=50 else 3 if p>=20 else 4
 
@@ -80,9 +79,8 @@ sf_pair AS (
     SELECT v,u FROM fio2 f WHERE f.person_id=s.person_id AND f.visit_occurrence_id=s.visit_occurrence_id
       AND abs(extract(epoch FROM f.ts-s.ts)) <= {sf_sec} ORDER BY abs(extract(epoch FROM f.ts-s.ts)) LIMIT 1
   ) f ON true
-  WHERE s.v <= 97  -- SpO2/FiO2 only valid <=97% per literature
+  WHERE s.v <= 97
 ),
--- LOCF all labs
 bili AS (SELECT person_id, visit_occurrence_id, COALESCE(measurement_datetime, measurement_date) AS ts, value_as_number AS v, unit_concept_id AS u FROM {CLINICAL_SCHEMA}.measurement WHERE measurement_concept_id IN ({sql_concept_set('bilirubin')}) {filt}),
 creat AS (SELECT person_id, visit_occurrence_id, COALESCE(measurement_datetime, measurement_date) AS ts, value_as_number AS v, unit_concept_id AS u FROM {CLINICAL_SCHEMA}.measurement WHERE measurement_concept_id IN ({sql_concept_set('creatinine')}) {filt}),
 plt AS (SELECT person_id, visit_occurrence_id, COALESCE(measurement_datetime, measurement_date) AS ts, value_as_number AS v FROM {CLINICAL_SCHEMA}.measurement WHERE measurement_concept_id IN ({sql_concept_set('platelets')}) {filt}),
@@ -101,7 +99,6 @@ vent AS ({sql_ventilation(person_ids)}),
 rrt AS ({sql_rrt(person_ids)}),
 uo AS (SELECT person_id, visit_occurrence_id, COALESCE(measurement_datetime, measurement_date) AS ts, value_as_number AS v FROM {CLINICAL_SCHEMA}.measurement WHERE measurement_concept_id IN ({sql_concept_set('urine')}) {filt})
 SELECT g.person_id, g.visit_occurrence_id, g.ts,
-  -- LOCF joins (simplified for brevity, full version uses window functions)
   (SELECT v FROM bili b WHERE b.person_id=g.person_id AND b.visit_occurrence_id=g.visit_occurrence_id AND b.ts <= g.ts AND b.ts > g.ts - interval '24 hours' ORDER BY b.ts DESC LIMIT 1) AS bili_v,
   (SELECT u FROM bili b WHERE b.person_id=g.person_id AND b.visit_occurrence_id=g.visit_occurrence_id AND b.ts <= g.ts AND b.ts > g.ts - interval '24 hours' ORDER BY b.ts DESC LIMIT 1) AS bili_u,
   (SELECT v FROM creat c WHERE c.person_id=g.person_id AND c.visit_occurrence_id=g.visit_occurrence_id AND c.ts <= g.ts AND c.ts > g.ts - interval '24 hours' ORDER BY c.ts DESC LIMIT 1) AS creat_v,
@@ -124,7 +121,6 @@ SELECT g.person_id, g.visit_occurrence_id, g.ts,
 FROM grid g
 """
     df = fetch_sql(db_conn, sql)
-    # Apply unit conversions in Python (vectorized)
     df['bili'] = df.apply(lambda r: convert(r.bili_v, 'bilirubin', r.bili_u), axis=1)
     df['creat'] = df.apply(lambda r: convert(r.creat_v, 'creatinine', r.creat_u), axis=1)
     df['pao2'] = df.apply(lambda r: convert(r.pao2_v, 'pao2', r.pao2_u), axis=1)
@@ -133,8 +129,7 @@ FROM grid g
     df['sfio2'] = df.apply(lambda r: convert(r.sfio2_v, 'fio2', r.sfio2_u), axis=1)
     df['pf'] = df['pao2'] / df['fio2'].replace(0, np.nan)
     df['sf'] = np.where(df['spo2']<=0.97, df['spo2']/df['sfio2'].replace(0, np.nan), np.nan)
-    # SpO2/FiO2 to PaO2/FiO2 equivalent (Rice 2007): SF = 64 + 0.84*PF => PF = (SF-64)/0.84
-    df['sf_equiv'] = (df['sf']*100 - 64) / 0.84  # convert fraction to ratio approximation
+    df['sf_equiv'] = (df['sf']*100 - 64) / 0.84
     df['resp'] = df.apply(lambda r: _resp_score(r.pf, r.sf_equiv, r.vent), axis=1)
     df['cardio'] = df.apply(lambda r: _cardio(r.map_v, r.norepi_eq), axis=1)
     df['neuro'] = df['gcs_v'].apply(_neuro)

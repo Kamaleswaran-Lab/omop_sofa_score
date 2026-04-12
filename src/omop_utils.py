@@ -32,7 +32,7 @@ def set_schemas(clinical="omopcdm", vocab="vocabulary"):
 def _log(m):
     if VERBOSE: print(f"[omop_utils] {m}")
 
-# ---- UCUM unit_concept_id map ----
+# UCUM unit_concept_id map
 # 8840 mg/dL, 8751 umol/L, 8876 mmHg, 8870 kPa, 8554 %, 8555 fraction
 UNIT_FACTORS = {
     ('bilirubin', 8840): 1.0,
@@ -43,7 +43,7 @@ UNIT_FACTORS = {
     ('pao2', 8870): 7.50062,
     ('fio2', 8554): 0.01,
     ('fio2', 8555): 1.0,
-    ('spo2', 8554): 0.01,  # percent to fraction
+    ('spo2', 8554): 0.01,
 }
 
 def convert(val, domain, unit_concept_id):
@@ -51,10 +51,10 @@ def convert(val, domain, unit_concept_id):
     try:
         key = (domain, int(unit_concept_id))
         return float(val) * UNIT_FACTORS.get(key, 1.0)
-    except: 
+    except:
         return float(val)
 
-# ---- LOINC concept sets (expanded via ancestor) ----
+# LOINC concept sets
 LOINC_SETS = {
     'bilirubin': ['1975-2','1971-1','14629-0','14631-6','33833-4'],
     'creatinine': ['2160-0','38483-4','14682-9','33914-3'],
@@ -80,7 +80,7 @@ FROM {VOCAB_SCHEMA}.concept c
 JOIN {VOCAB_SCHEMA}.concept_ancestor ca ON c.concept_id = ca.ancestor_concept_id
 WHERE c.vocabulary_id='LOINC' AND c.concept_code IN ({codes})"""
 
-# ---- Vasopressors ----
+# Vasopressors
 VASO_MAP = {
     1319998: ('norepinephrine', 1.0),
     1322081: ('epinephrine', 1.0),
