@@ -2,26 +2,17 @@
 validate_concepts.py
 
 Check if OMOP site has required concepts for SOFA calculation
-
-Validates:
-- Core lab concepts (PaO2, FiO2, creatinine, etc.)
-- Vasopressor concepts (including vasopressin)
-- Ventilation concepts
-- Neuro concepts (GCS, RASS)
-- Sepsis-3 concepts (antibiotics, cultures)
-
 CHoRUS Edition - handles incomplete concept_ancestor tables
 """
 
 import sys
 import argparse
-from typing import Dict, List, Tuple
+from typing import Dict, Tuple
 import logging
 
 logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
 logger = logging.getLogger(__name__)
 
-# Required concepts for SOFA calculation
 REQUIRED_CONCEPTS = {
     'Core Labs': {
         3002647: 'PaO2 (arterial oxygen)',
@@ -59,19 +50,17 @@ REQUIRED_CONCEPTS = {
     }
 }
 
-# CHoRUS-specific concept overrides for broken vocabularies
-# These are actual concept IDs found in MGH/CHoRUS data
 CHORUS_OVERRIDES = {
-    1360635: [1360635, 35202042, 35202043, 45775841, 1507835, 1507838, 19039813],  # Vasopressin
-    4328749: [4328749, 1343916, 1349624],  # Norepinephrine variants
-    1338005: [1338005],  # Epinephrine
-    3002647: [3002647, 3023091, 3003461],  # PaO2 variants
-    3013468: [3013468, 3025329],  # FiO2 variants
+    1360635: [1360635, 35202042, 35202043, 45775841, 1507835, 1507838, 19039813],
+    4328749: [4328749, 1343916, 1349624],
+    1338005: [1338005],
+    3002647: [3002647, 3023091, 3003461],
+    3013468: [3013468, 3025329],
+    1335616: [1335616],
+    1319998: [1319998],
 }
 
 class ConceptValidator:
-    """Validate OMOP site has required concepts"""
-    
     def __init__(self, connection_string: str, cdm_schema: str = 'cdm', vocab_schema: str = 'vocab'):
         self.connection_string = connection_string
         self.cdm_schema = cdm_schema
@@ -79,7 +68,6 @@ class ConceptValidator:
         self.engine = None
 
     def connect(self):
-        """Connect to database"""
         try:
             from sqlalchemy import create_engine
             self.engine = create_engine(self.connection_string)
@@ -90,16 +78,9 @@ class ConceptValidator:
             return False
 
     def check_concept_exists(self, concept_id: int) -> Tuple[bool, int, int]:
-        """
-        Check if concept exists and has descendants
-        Returns: (exists, descendant_count, record_count)
-        
-        CHoRUS fix: Also checks direct concept matches when ancestor table is incomplete
-        """
         from sqlalchemy import text
         
         with self.engine.connect() as conn:
-            # Check if concept exists in vocabulary
             result = conn.execute(
                 text(f"SELECT COUNT(*) FROM {self.vocab_schema}.concept WHERE concept_id = :id"),
                 {'id': concept_id}
@@ -109,85 +90,44 @@ class ConceptValidator:
             if not exists:
                 return False, 0, 0
 
-            # Get all concept IDs to check (including CHoRUS overrides)
             concept_ids_to_check = CHORUS_OVERRIDES.get(concept_id, [concept_id])
             ids_str = ','.join(str(x) for x in concept_ids_to_check)
             
-            # Count descendants - include self even if not in ancestor table
             descendants = conn.execute(
-                text(f"""
-                SELECT COUNT(DISTINCT descendant_concept_id)
-                FROM {self.vocab_schema}.concept_ancestor
-                WHERE ancestor_concept_id IN ({ids_str})
-                """)
+                text(f"SELECT COUNT(DISTINCT descendant_concept_id) FROM {self.vocab_schema}.concept_ancestor WHERE ancestor_concept_id IN ({ids_str})")
             ).scalar() or 0
             
-            # If no descendants found, at least count the concept itself
             if descendants == 0:
                 descendants = 1
 
-            # Count records in CDM
             record_count = 0
             
-            # Lab concepts
             if concept_id in [3002647, 3013468, 3016723, 3024128, 3013290, 4065485, 3013762, 3027598]:
                 record_count = conn.execute(
-                    text(f"""
-                    SELECT COUNT(*) 
-                    FROM {self.cdm_schema}.measurement m
-                    LEFT JOIN {self.vocab_schema}.concept_ancestor ca 
-                        ON ca.descendant_concept_id = m.measurement_concept_id
-                    WHERE ca.ancestor_concept_id IN ({ids_str})
-                       OR m.measurement_concept_id IN ({ids_str})
-                    """)
+                    text(f"SELECT COUNT(*) FROM {self.cdm_schema}.measurement m LEFT JOIN {self.vocab_schema}.concept_ancestor ca ON ca.descendant_concept_id = m.measurement_concept_id WHERE ca.ancestor_concept_id IN ({ids_str}) OR m.measurement_concept_id IN ({ids_str})")
                 ).scalar() or 0
             
-            # Drug concepts
             elif concept_id in [4328749, 1338005, 1360635, 1335616, 1319998, 21600381]:
                 record_count = conn.execute(
-                    text(f"""
-                    SELECT COUNT(*) 
-                    FROM {self.cdm_schema}.drug_exposure d
-                    LEFT JOIN {self.vocab_schema}.concept_ancestor ca 
-                        ON ca.descendant_concept_id = d.drug_concept_id
-                    WHERE ca.ancestor_concept_id IN ({ids_str})
-                       OR d.drug_concept_id IN ({ids_str})
-                    """)
+                    text(f"SELECT COUNT(*) FROM {self.cdm_schema}.drug_exposure d LEFT JOIN {self.vocab_schema}.concept_ancestor ca ON ca.descendant_concept_id = d.drug_concept_id WHERE ca.ancestor_concept_id IN ({ids_str}) OR d.drug_concept_id IN ({ids_str})")
                 ).scalar() or 0
             
-            # Procedure concepts
             elif concept_id in [45768131, 4302207, 4146536, 4046263]:
                 table = 'procedure_occurrence' if concept_id != 45768131 else 'device_exposure'
                 concept_col = 'procedure_concept_id' if concept_id != 45768131 else 'device_concept_id'
                 
                 record_count = conn.execute(
-                    text(f"""
-                    SELECT COUNT(*) 
-                    FROM {self.cdm_schema}.{table} p
-                    LEFT JOIN {self.vocab_schema}.concept_ancestor ca 
-                        ON ca.descendant_concept_id = p.{concept_col}
-                    WHERE ca.ancestor_concept_id IN ({ids_str})
-                       OR p.{concept_col} IN ({ids_str})
-                    """)
+                    text(f"SELECT COUNT(*) FROM {self.cdm_schema}.{table} p LEFT JOIN {self.vocab_schema}.concept_ancestor ca ON ca.descendant_concept_id = p.{concept_col} WHERE ca.ancestor_concept_id IN ({ids_str}) OR p.{concept_col} IN ({ids_str})")
                 ).scalar() or 0
             
-            # Observation concepts (GCS, RASS)
             elif concept_id in [4253928, 40488434]:
                 record_count = conn.execute(
-                    text(f"""
-                    SELECT COUNT(*) 
-                    FROM {self.cdm_schema}.observation o
-                    LEFT JOIN {self.vocab_schema}.concept_ancestor ca 
-                        ON ca.descendant_concept_id = o.observation_concept_id
-                    WHERE ca.ancestor_concept_id IN ({ids_str})
-                       OR o.observation_concept_id IN ({ids_str})
-                    """)
+                    text(f"SELECT COUNT(*) FROM {self.cdm_schema}.observation o LEFT JOIN {self.vocab_schema}.concept_ancestor ca ON ca.descendant_concept_id = o.observation_concept_id WHERE ca.ancestor_concept_id IN ({ids_str}) OR o.observation_concept_id IN ({ids_str})")
                 ).scalar() or 0
 
             return True, descendants, record_count
 
     def validate_all(self) -> Dict:
-        """Validate all required concepts"""
         results = {}
         
         logger.info("=" * 70)
@@ -211,7 +151,6 @@ class ConceptValidator:
                 else:
                     status = "[!]"
                 
-                # Special warning for vasopressin
                 warning = ""
                 if concept_id == 1360635 and count == 0:
                     warning = "  WARNING: Vasopressin missing! Cardio SOFA will be wrong"
@@ -234,28 +173,19 @@ class ConceptValidator:
         return results
 
     def print_summary(self, results: Dict):
-        """Print validation summary"""
         logger.info("")
         logger.info("=" * 70)
         logger.info("VALIDATION SUMMARY")
         logger.info("=" * 70)
         
         total_concepts = sum(len(concepts) for concepts in REQUIRED_CONCEPTS.values())
-        found_concepts = sum(
-            sum(1 for r in cat_results if r['exists'])
-            for cat_results in results.values()
-        )
-        
-        concepts_with_data = sum(
-            sum(1 for r in cat_results if r['record_count'] > 0)
-            for cat_results in results.values()
-        )
+        found_concepts = sum(sum(1 for r in cat_results if r['exists']) for cat_results in results.values())
+        concepts_with_data = sum(sum(1 for r in cat_results if r['record_count'] > 0) for cat_results in results.values())
         
         logger.info("")
         logger.info(f"Concepts found in vocabulary: {found_concepts}/{total_concepts}")
         logger.info(f"Concepts with data: {concepts_with_data}/{total_concepts}")
         
-        # Check critical concepts
         critical_missing = []
         for category, cat_results in results.items():
             for result in cat_results:
@@ -286,7 +216,6 @@ class ConceptValidator:
         logger.info("RECOMMENDATIONS")
         logger.info("=" * 70)
         
-        # Vasopressin check
         vaso_result = None
         for cat_results in results.values():
             for r in cat_results:
@@ -303,7 +232,6 @@ class ConceptValidator:
             logger.info("")
             logger.info(f"1. Vasopressin: Found {vaso_result['record_count']} records")
         
-        # FiO2 check
         fio2_result = None
         for cat_results in results.values():
             for r in cat_results:
