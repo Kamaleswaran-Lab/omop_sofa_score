@@ -103,7 +103,7 @@ class ConceptValidator:
                 text(f"""
                     SELECT COUNT(DISTINCT descendant_concept_id) 
                     FROM {self.vocab_schema}.concept_ancestor 
-                    WHERE ancestor_concept_id = :id
+                    WHERE (ca.ancestor_concept_id = %(id)s OR m.measurement_concept_id = %(id)s)
                 """),
                 {'id': concept_id}
             ).scalar()
@@ -117,7 +117,7 @@ class ConceptValidator:
                         SELECT COUNT(*) FROM {self.cdm_schema}.measurement m
                         JOIN {self.vocab_schema}.concept_ancestor ca 
                             ON ca.descendant_concept_id = m.measurement_concept_id
-                        WHERE ca.ancestor_concept_id = :id
+                        WHERE (ca.ancestor_concept_id = %(id)s OR m.measurement_concept_id = %(id)s)
                     """),
                     {'id': concept_id}
                 ).scalar()
