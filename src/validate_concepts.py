@@ -83,7 +83,7 @@ class ConceptValidator:
         try:
             from sqlalchemy import create_engine
             self.engine = create_engine(self.connection_string)
-            logger.info(f"Connected to database")
+            logger.info("Connected to database")
             return True
         except Exception as e:
             logger.error(f"Connection failed: {e}")
@@ -119,8 +119,7 @@ class ConceptValidator:
                 SELECT COUNT(DISTINCT descendant_concept_id)
                 FROM {self.vocab_schema}.concept_ancestor
                 WHERE ancestor_concept_id IN ({ids_str})
-                """),
-                {}
+                """)
             ).scalar() or 0
             
             # If no descendants found, at least count the concept itself
@@ -140,8 +139,7 @@ class ConceptValidator:
                         ON ca.descendant_concept_id = m.measurement_concept_id
                     WHERE ca.ancestor_concept_id IN ({ids_str})
                        OR m.measurement_concept_id IN ({ids_str})
-                    """),
-                    {}
+                    """)
                 ).scalar() or 0
             
             # Drug concepts
@@ -154,8 +152,7 @@ class ConceptValidator:
                         ON ca.descendant_concept_id = d.drug_concept_id
                     WHERE ca.ancestor_concept_id IN ({ids_str})
                        OR d.drug_concept_id IN ({ids_str})
-                    """),
-                    {}
+                    """)
                 ).scalar() or 0
             
             # Procedure concepts
@@ -171,8 +168,7 @@ class ConceptValidator:
                         ON ca.descendant_concept_id = p.{concept_col}
                     WHERE ca.ancestor_concept_id IN ({ids_str})
                        OR p.{concept_col} IN ({ids_str})
-                    """),
-                    {}
+                    """)
                 ).scalar() or 0
             
             # Observation concepts (GCS, RASS)
@@ -185,8 +181,7 @@ class ConceptValidator:
                         ON ca.descendant_concept_id = o.observation_concept_id
                     WHERE ca.ancestor_concept_id IN ({ids_str})
                        OR o.observation_concept_id IN ({ids_str})
-                    """),
-                    {}
+                    """)
                 ).scalar() or 0
 
             return True, descendants, record_count
@@ -200,6 +195,7 @@ class ConceptValidator:
         logger.info("=" * 70)
         
         for category, concepts in REQUIRED_CONCEPTS.items():
+            logger.info("")
             logger.info(f"{category}:")
             logger.info("-" * 70)
             
@@ -208,17 +204,21 @@ class ConceptValidator:
             for concept_id, description in concepts.items():
                 exists, descendants, count = self.check_concept_exists(concept_id)
                 
-                status = "â" if exists and count > 0 else "â" if not exists else "â "
+                if exists and count > 0:
+                    status = "[OK]"
+                elif not exists:
+                    status = "[X]"
+                else:
+                    status = "[!]"
                 
                 # Special warning for vasopressin
                 warning = ""
                 if concept_id == 1360635 and count == 0:
-                    warning = " â  CRITICAL: Vasopressin missing! Cardio SOFA will be wrong"
+                    warning = "  WARNING: Vasopressin missing! Cardio SOFA will be wrong"
                 elif concept_id == 1360635 and count > 0:
-                    warning = f" â Found {count} vasopressin records (CHoRUS override active)"
+                    warning = f"  Found {count} vasopressin records (CHoRUS override active)"
                 
-                logger.info(f"  {status} {concept_id:8} | {description:45} | "
-                          f"descendants: {descendants:5} | records: {count:8,}{warning}")
+                logger.info(f"  {status} {concept_id:8} | {description:45} | descendants: {descendants:5} | records: {count:8,}{warning}")
                 
                 category_results.append({
                     'concept_id': concept_id,
@@ -235,8 +235,8 @@ class ConceptValidator:
 
     def print_summary(self, results: Dict):
         """Print validation summary"""
-        logger.info("
-" + "=" * 70)
+        logger.info("")
+        logger.info("=" * 70)
         logger.info("VALIDATION SUMMARY")
         logger.info("=" * 70)
         
@@ -251,8 +251,8 @@ class ConceptValidator:
             for cat_results in results.values()
         )
         
-        logger.info(f"
-Concepts found in vocabulary: {found_concepts}/{total_concepts}")
+        logger.info("")
+        logger.info(f"Concepts found in vocabulary: {found_concepts}/{total_concepts}")
         logger.info(f"Concepts with data: {concepts_with_data}/{total_concepts}")
         
         # Check critical concepts
@@ -263,26 +263,26 @@ Concepts found in vocabulary: {found_concepts}/{total_concepts}")
                     critical_missing.append(result['description'])
         
         if critical_missing:
-            logger.error(f"
-â CRITICAL ISSUES FOUND:")
+            logger.error("")
+            logger.error("CRITICAL ISSUES FOUND:")
             for item in critical_missing:
                 logger.error(f"  - {item}")
-            logger.error(f"
-These will cause incorrect SOFA calculations!")
+            logger.error("")
+            logger.error("These will cause incorrect SOFA calculations!")
         else:
-            logger.info(f"
-â All critical concepts have data")
+            logger.info("")
+            logger.info("All critical concepts have data")
         
-        logger.info(f"
-Data availability:")
+        logger.info("")
+        logger.info("Data availability:")
         for category, cat_results in results.items():
             with_data = sum(1 for r in cat_results if r['record_count'] > 0)
             total = len(cat_results)
             pct = (with_data / total * 100) if total > 0 else 0
             logger.info(f"  {category:25} {with_data}/{total} concepts have data ({pct:.0f}%)")
         
-        logger.info("
-" + "=" * 70)
+        logger.info("")
+        logger.info("=" * 70)
         logger.info("RECOMMENDATIONS")
         logger.info("=" * 70)
         
@@ -295,13 +295,13 @@ Data availability:")
                     break
         
         if vaso_result and vaso_result['record_count'] == 0:
-            logger.warning(f"
-1. Vasopressin: No data found")
-            logger.warning(f"   - Cardio SOFA will be underestimated in septic shock")
-            logger.warning(f"   - Check CHORUS_OVERRIDES in validate_concepts.py")
+            logger.warning("")
+            logger.warning("1. Vasopressin: No data found")
+            logger.warning("   - Cardio SOFA will be underestimated in septic shock")
+            logger.warning("   - Check CHORUS_OVERRIDES in validate_concepts.py")
         elif vaso_result:
-            logger.info(f"
-1. Vasopressin: â Found {vaso_result['record_count']} records")
+            logger.info("")
+            logger.info(f"1. Vasopressin: Found {vaso_result['record_count']} records")
         
         # FiO2 check
         fio2_result = None
@@ -312,13 +312,13 @@ Data availability:")
                     break
         
         if fio2_result and fio2_result['record_count'] == 0:
-            logger.warning(f"
-2. FiO2: No data found")
-            logger.warning(f"   - Respiratory SOFA will be NULL for most patients")
-            logger.warning(f"   - This is CORRECT (no imputation), but reduces sample size")
+            logger.warning("")
+            logger.warning("2. FiO2: No data found")
+            logger.warning("   - Respiratory SOFA will be NULL for most patients")
+            logger.warning("   - This is CORRECT (no imputation), but reduces sample size")
         
-        logger.info(f"
-â Validation complete")
+        logger.info("")
+        logger.info("Validation complete")
 
 def main():
     parser = argparse.ArgumentParser(description='Validate OMOP concepts for SOFA calculation')
