@@ -1,0 +1,31 @@
+site_name: "Template Site"
+site_id: "TEMPLATE"
+
+schemas:
+  clinical: "omopcdm"
+  vocabulary: "vocabulary"
+  results: "omopcdm"  # where to write sofa tables
+
+database:
+  dbname: "omop"
+  user: "postgres"
+  password: "${OMOP_PASSWORD}"  # set env var, don't hardcode
+  host: "localhost"
+  port: 5432
+
+pragmatic_mode: true
+concept_mode: "hybrid"
+fio2_imputation: "conditional"
+baseline_strategy: "last_available"
+pao2_fio2_window: 120
+spo2_fio2_window: 120
+chunk_size: 500
+
+data_quality:
+  platelets_min: 5
+  platelets_max: 2000
+  creatinine_min: 0.1
+  creatinine_max: 30
+  bilirubin_max: 50
+  fio2_min: 0.21
+  fio2_max: 1.0

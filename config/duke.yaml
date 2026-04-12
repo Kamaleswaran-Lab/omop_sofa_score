@@ -1,0 +1,22 @@
+site_name: "Duke University Health System"
+site_id: "DUKE"
+
+schemas:
+  clinical: "cdm_duke"
+  vocabulary: "vocab"
+  results: "results_duke"
+
+database:
+  dbname: "duke_omop"
+  user: "omop_user"
+  password: "${DUKE_DB_PASSWORD}"
+  host: "duke-db.duhs.duke.edu"
+  port: 5432
+
+pragmatic_mode: true
+concept_mode: "hybrid"
+fio2_imputation: "conditional"
+baseline_strategy: "last_available"
+pao2_fio2_window: 180  # Duke charts less frequently
+spo2_fio2_window: 180
+chunk_size: 1000

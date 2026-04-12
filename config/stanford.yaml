@@ -1,0 +1,22 @@
+site_name: "Stanford Medicine"
+site_id: "STANFORD"
+
+schemas:
+  clinical: "omop"
+  vocabulary: "vocabulary"
+  results: "sofa_results"
+
+database:
+  dbname: "stanford_omop"
+  user: "researcher"
+  password: "${STANFORD_DB_PASSWORD}"
+  host: "localhost"
+  port: 5432
+
+pragmatic_mode: true
+concept_mode: "ancestor"  # Stanford has excellent ETL
+fio2_imputation: "none"
+baseline_strategy: "min_72_6"
+pao2_fio2_window: 120
+spo2_fio2_window: 120
+chunk_size: 500

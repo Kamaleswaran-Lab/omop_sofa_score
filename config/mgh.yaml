@@ -1,0 +1,22 @@
+site_name: "Massachusetts General Hospital"
+site_id: "MGH"
+
+schemas:
+  clinical: "omopcdm"
+  vocabulary: "vocabulary"
+  results: "omopcdm"
+
+database:
+  dbname: "mgh"
+  user: "postgres"
+  password: "${MGH_DB_PASSWORD}"
+  host: "localhost"
+  port: 5432
+
+pragmatic_mode: true
+concept_mode: "hybrid"
+fio2_imputation: "conditional"
+baseline_strategy: "last_available"
+pao2_fio2_window: 120
+spo2_fio2_window: 120
+chunk_size: 500
