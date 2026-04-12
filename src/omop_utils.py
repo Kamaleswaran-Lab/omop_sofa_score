@@ -1,8 +1,12 @@
 """
-omop_utils.py - MGH CHoRUS SQL backend (v2, triple-checked)
-Replaces flat-file DataFrame loading with direct PostgreSQL queries.
-All original functionalities preserved: concept_ancestor expansion, unit conversion,
-COALESCE datetime handling, schema split (omopcdm + vocabulary).
+omop_utils.py - OMOP SOFA/Sepsis-3 utilities
+Version: 3.1 (production, multi-site)
+- Schema split: clinical=omopcdm, vocab=vocabulary (configurable)
+- Concept sets via concept_ancestor + LOINC (no hard-coded IDs)
+- Unit conversion via unit_concept_id (no string parsing)
+- Vasopressor rate from duration + dose_unit, with norepi equivalents
+- PaO2/FiO2 pairing window configurable (default 120 min)
+- SpO2/FiO2 surrogate when PaO2 missing (SpO2 <=97%)
 """
 
 import pandas as pd
@@ -11,6 +15,10 @@ import numpy as np
 CLINICAL_SCHEMA = "omopcdm"
 VOCAB_SCHEMA = "vocabulary"
 VERBOSE = False
+
+# Pairing window for oxygenation (minutes)
+PAO2_FIO2_WINDOW_MIN = 120
+SPO2_FIO2_WINDOW_MIN = 120
 
 def set_verbose(v=True):
     global VERBOSE
@@ -21,206 +29,134 @@ def set_schemas(clinical="omopcdm", vocab="vocabulary"):
     CLINICAL_SCHEMA = clinical
     VOCAB_SCHEMA = vocab
 
-def _log(msg):
-    if VERBOSE:
-        print(f"[omop_utils] {msg}")
+def _log(m):
+    if VERBOSE: print(f"[omop_utils] {m}")
 
-# ---- Validated concept sets (README) ----
-BILIRUBIN_IDS = [3024128, 3005673, 3037290, 3010156, 3049077]
-CREATININE_IDS = [3016723, 3020564, 3006155, 3022068]
-PLATELETS_IDS = [3024929, 3007461, 3013682, 3024980, 3039193]
-PAO2_IDS = [3012731, 3024561, 3006277]
-FIO2_IDS = [3016502, 3023541, 3020718, 3035196]
-MAP_IDS = [3019962, 3034703]
-SBP_IDS = [3004249, 3018586]
-DBP_IDS = [3019960, 3013940]
-GCS_TOTAL_IDS = [3005823]
-GCS_EYE_IDS = [3009097]
-GCS_VERBAL_IDS = [3008223]
-GCS_MOTOR_IDS = [3016517]
-WEIGHT_IDS = [3025315]
-URINE_OUTPUT_IDS = [3004304, 4021485]
+# ---- UCUM unit_concept_id map ----
+# 8840 mg/dL, 8751 umol/L, 8876 mmHg, 8870 kPa, 8554 %, 8555 fraction
+UNIT_FACTORS = {
+    ('bilirubin', 8840): 1.0,
+    ('bilirubin', 8751): 1/17.1,
+    ('creatinine', 8840): 1.0,
+    ('creatinine', 8751): 1/88.4,
+    ('pao2', 8876): 1.0,
+    ('pao2', 8870): 7.50062,
+    ('fio2', 8554): 0.01,
+    ('fio2', 8555): 1.0,
+    ('spo2', 8554): 0.01,  # percent to fraction
+}
 
-VASOPRESSOR_ANCESTORS = [1319998, 1322081, 1319997, 1345852, 1345853]
-VENTILATION_ANCESTOR = 4048778
-RRT_ANCESTOR = 4146536
-CULTURE_ANCESTOR = 4042031
-
-# ---- Unit conversions ----
-def to_mg_dl_bilirubin(val, unit):
+def convert(val, domain, unit_concept_id):
     if pd.isna(val): return np.nan
-    if unit and 'umol' in str(unit).lower():
-        return float(val) / 17.1
-    return float(val)
+    try:
+        key = (domain, int(unit_concept_id))
+        return float(val) * UNIT_FACTORS.get(key, 1.0)
+    except: 
+        return float(val)
 
-def to_mg_dl_creatinine(val, unit):
-    if pd.isna(val): return np.nan
-    if unit and 'umol' in str(unit).lower():
-        return float(val) / 88.4
-    return float(val)
+# ---- LOINC concept sets (expanded via ancestor) ----
+LOINC_SETS = {
+    'bilirubin': ['1975-2','1971-1','14629-0','14631-6','33833-4'],
+    'creatinine': ['2160-0','38483-4','14682-9','33914-3'],
+    'platelets': ['777-3','778-1','26515-7','49497-2'],
+    'pao2': ['2703-7','2019-8','11556-8'],
+    'fio2': ['19994-3','19995-0','3150-0'],
+    'spo2': ['2708-6','59408-5','59417-6'],
+    'map': ['8478-0','7597-5','8454-1'],
+    'sbp': ['8480-6','8459-0'],
+    'dbp': ['8462-4','8453-3'],
+    'gcs_total': ['9269-2','35088-4'],
+    'gcs_eye': ['9267-6'],
+    'gcs_verbal': ['9270-0'],
+    'gcs_motor': ['9268-4'],
+    'weight': ['29463-7','3141-9'],
+    'urine': ['3167-4','14743-9','8999-5']
+}
 
-def to_mmhg_pao2(val, unit):
-    if pd.isna(val): return np.nan
-    if unit and 'kpa' in str(unit).lower():
-        return float(val) * 7.50062
-    return float(val)
+def sql_concept_set(domain):
+    codes = ",".join(f"'{c}'" for c in LOINC_SETS[domain])
+    return f"""SELECT DISTINCT ca.descendant_concept_id
+FROM {VOCAB_SCHEMA}.concept c
+JOIN {VOCAB_SCHEMA}.concept_ancestor ca ON c.concept_id = ca.ancestor_concept_id
+WHERE c.vocabulary_id='LOINC' AND c.concept_code IN ({codes})"""
 
-def to_fraction_fio2(val, unit):
-    if pd.isna(val): return np.nan
-    v = float(val)
-    return v / 100.0 if v > 1.5 else v
-
-def to_k_per_ul_platelets(val, unit):
-    if pd.isna(val): return np.nan
-    return float(val)
-
-def _in_clause(ids):
-    return ",".join(str(int(i)) for i in ids)
-
-# ---- SQL generators ----
-def sql_iv_antibiotics(person_ids=None, start_date='2019-01-01'):
-    filt = ""
-    if person_ids is not None:
-        ids = _in_clause(person_ids if isinstance(person_ids, (list, tuple, set)) else [person_ids])
-        filt = f" AND de.person_id IN ({ids})"
-    return f"""
-SELECT
-  de.person_id,
-  de.visit_occurrence_id,
-  COALESCE(de.drug_exposure_start_datetime, de.drug_exposure_start_date::timestamp) AS start_time,
-  COALESCE(de.drug_exposure_end_datetime, de.drug_exposure_end_date::timestamp,
-           COALESCE(de.drug_exposure_start_datetime, de.drug_exposure_start_date::timestamp) + INTERVAL '1 hour') AS end_time,
-  c.concept_id AS drug_concept_id,
-  c.concept_name AS drug_name,
-  de.quantity,
-  de.dose_unit_source_value,
-  de.route_concept_id
-FROM {CLINICAL_SCHEMA}.drug_exposure de
-JOIN {VOCAB_SCHEMA}.concept_ancestor ca ON de.drug_concept_id = ca.descendant_concept_id
-JOIN {VOCAB_SCHEMA}.concept c ON de.drug_concept_id = c.concept_id
-WHERE ca.ancestor_concept_id = (
-    SELECT concept_id FROM {VOCAB_SCHEMA}.concept
-    WHERE vocabulary_id='ATC' AND concept_code='J01' AND invalid_reason IS NULL LIMIT 1
-)
-  AND de.route_concept_id = 4171047
-  AND COALESCE(de.drug_exposure_start_date, '1900-01-01') >= DATE '{start_date}'
-  {filt}
-"""
-
-def sql_measurements(concept_ids, person_ids=None):
-    ids = _in_clause(concept_ids)
-    filt = ""
-    if person_ids is not None:
-        pid = _in_clause(person_ids if isinstance(person_ids, (list, tuple, set)) else [person_ids])
-        filt = f" AND m.person_id IN ({pid})"
-    return f"""
-SELECT
-  m.person_id,
-  m.visit_occurrence_id,
-  COALESCE(m.measurement_datetime, m.measurement_date::timestamp) AS meas_time,
-  m.measurement_concept_id,
-  c.concept_name,
-  m.value_as_number,
-  m.unit_concept_id,
-  u.concept_name AS unit_name,
-  m.unit_source_value
-FROM {CLINICAL_SCHEMA}.measurement m
-JOIN {VOCAB_SCHEMA}.concept c ON m.measurement_concept_id = c.concept_id
-LEFT JOIN {VOCAB_SCHEMA}.concept u ON m.unit_concept_id = u.concept_id
-WHERE m.measurement_concept_id IN ({ids}) {filt}
-"""
+# ---- Vasopressors ----
+VASO_MAP = {
+    1319998: ('norepinephrine', 1.0),
+    1322081: ('epinephrine', 1.0),
+    1319997: ('dopamine', 0.01),
+    1345852: ('phenylephrine', 0.1),
+    1345853: ('vasopressin', 2.5)
+}
 
 def sql_vasopressors(person_ids=None):
-    filt = ""
-    if person_ids is not None:
-        pid = _in_clause(person_ids if isinstance(person_ids, (list, tuple, set)) else [person_ids])
-        filt = f" AND de.person_id IN ({pid})"
-    ancestors = _in_clause(VASOPRESSOR_ANCESTORS)
+    filt = f"AND de.person_id IN ({','.join(map(str, person_ids))})" if person_ids else ""
+    ancestors = ",".join(map(str, VASO_MAP.keys()))
     return f"""
-SELECT
-  de.person_id,
-  de.visit_occurrence_id,
-  COALESCE(de.drug_exposure_start_datetime, de.drug_exposure_start_date::timestamp) AS start_time,
-  COALESCE(de.drug_exposure_end_datetime, de.drug_exposure_end_date::timestamp) AS end_time,
-  de.drug_concept_id,
-  c.concept_name AS drug_name,
-  de.quantity,
-  de.dose_unit_source_value,
-  w.weight_kg
-FROM {CLINICAL_SCHEMA}.drug_exposure de
-JOIN {VOCAB_SCHEMA}.concept c ON de.drug_concept_id = c.concept_id
-JOIN {VOCAB_SCHEMA}.concept_ancestor ca ON de.drug_concept_id = ca.descendant_concept_id AND ca.ancestor_concept_id IN ({ancestors})
-LEFT JOIN LATERAL (
-  SELECT m.value_as_number AS weight_kg
-  FROM {CLINICAL_SCHEMA}.measurement m
-  WHERE m.person_id = de.person_id
-    AND m.measurement_concept_id = 3025315
-    AND COALESCE(m.measurement_datetime, m.measurement_date::timestamp) <= COALESCE(de.drug_exposure_start_datetime, de.drug_exposure_start_date::timestamp)
-  ORDER BY COALESCE(m.measurement_datetime, m.measurement_date::timestamp) DESC LIMIT 1
-) w ON true
-WHERE de.route_concept_id = 4171047 {filt}
+WITH v AS (
+ SELECT de.person_id, de.visit_occurrence_id,
+  COALESCE(de.drug_exposure_start_datetime, de.drug_exposure_start_date) AS start_time,
+  COALESCE(de.drug_exposure_end_datetime, de.drug_exposure_end_date,
+           COALESCE(de.drug_exposure_start_datetime, de.drug_exposure_start_date)+interval '1 hour') AS end_time,
+  c.concept_id, c.concept_name,
+  de.quantity, de.dose_unit_source_value,
+  EXTRACT(EPOCH FROM (COALESCE(de.drug_exposure_end_datetime, de.drug_exposure_end_date) -
+                      COALESCE(de.drug_exposure_start_datetime, de.drug_exposure_start_date)))/60.0 AS dur_min,
+  (SELECT m.value_as_number FROM {CLINICAL_SCHEMA}.measurement m
+   WHERE m.person_id=de.person_id AND m.measurement_concept_id IN ({sql_concept_set('weight')})
+     AND COALESCE(m.measurement_datetime,m.measurement_date) <= COALESCE(de.drug_exposure_start_datetime,de.drug_exposure_start_date)
+   ORDER BY COALESCE(m.measurement_datetime,m.measurement_date) DESC LIMIT 1) AS wt
+ FROM {CLINICAL_SCHEMA}.drug_exposure de
+ JOIN {VOCAB_SCHEMA}.concept c ON de.drug_concept_id=c.concept_id
+ JOIN {VOCAB_SCHEMA}.concept_ancestor ca ON de.drug_concept_id=ca.descendant_concept_id AND ca.ancestor_concept_id IN ({ancestors})
+ WHERE de.route_concept_id=4171047 {filt}
+)
+SELECT *, 
+ CASE
+   WHEN lower(dose_unit_source_value) LIKE '%mcg/kg/min%' THEN quantity
+   WHEN lower(dose_unit_source_value) LIKE '%mcg/min%' THEN quantity/NULLIF(wt,0)
+   WHEN dur_min>0 AND wt>0 THEN quantity*1000/dur_min/wt
+   ELSE NULL
+ END AS rate_mcgkgmin,
+ CASE concept_id
+   WHEN 1319998 THEN 1.0 WHEN 1322081 THEN 1.0 WHEN 1319997 THEN 0.01
+   WHEN 1345852 THEN 0.1 WHEN 1345853 THEN 2.5 ELSE 1.0 END AS norepi_factor
+FROM v
 """
 
 def sql_ventilation(person_ids=None):
-    filt = ""
-    if person_ids is not None:
-        pid = _in_clause(person_ids if isinstance(person_ids, (list, tuple, set)) else [person_ids])
-        filt = f" AND p.person_id IN ({pid})"
-    return f"""
-SELECT
-  p.person_id,
-  p.visit_occurrence_id,
-  COALESCE(p.procedure_datetime, p.procedure_date::timestamp) AS start_time,
-  COALESCE(p.procedure_end_datetime, COALESCE(p.procedure_datetime, p.procedure_date::timestamp) + INTERVAL '1 hour') AS end_time
-FROM {CLINICAL_SCHEMA}.procedure_occurrence p
-JOIN {VOCAB_SCHEMA}.concept_ancestor ca ON p.procedure_concept_id = ca.descendant_concept_id AND ca.ancestor_concept_id = {VENTILATION_ANCESTOR}
-WHERE 1=1 {filt}
-"""
+    filt = f"AND p.person_id IN ({','.join(map(str, person_ids))})" if person_ids else ""
+    return f"""SELECT person_id, visit_occurrence_id,
+  COALESCE(procedure_datetime, procedure_date) AS start_time,
+  COALESCE(procedure_end_datetime, COALESCE(procedure_datetime, procedure_date)+interval '1 hour') AS end_time
+ FROM {CLINICAL_SCHEMA}.procedure_occurrence p
+ JOIN {VOCAB_SCHEMA}.concept_ancestor ca ON p.procedure_concept_id=ca.descendant_concept_id AND ca.ancestor_concept_id=4048778
+ WHERE 1=1 {filt}"""
 
 def sql_rrt(person_ids=None):
-    filt = ""
-    if person_ids is not None:
-        pid = _in_clause(person_ids if isinstance(person_ids, (list, tuple, set)) else [person_ids])
-        filt = f" AND p.person_id IN ({pid})"
-    return f"""
-SELECT
-  p.person_id,
-  p.visit_occurrence_id,
-  COALESCE(p.procedure_datetime, p.procedure_date::timestamp) AS start_time
-FROM {CLINICAL_SCHEMA}.procedure_occurrence p
-JOIN {VOCAB_SCHEMA}.concept_ancestor ca ON p.procedure_concept_id = ca.descendant_concept_id AND ca.ancestor_concept_id = {RRT_ANCESTOR}
-WHERE 1=1 {filt}
-"""
+    filt = f"AND p.person_id IN ({','.join(map(str, person_ids))})" if person_ids else ""
+    return f"""SELECT person_id, visit_occurrence_id, COALESCE(procedure_datetime, procedure_date) AS start_time
+ FROM {CLINICAL_SCHEMA}.procedure_occurrence p
+ JOIN {VOCAB_SCHEMA}.concept_ancestor ca ON p.procedure_concept_id=ca.descendant_concept_id AND ca.ancestor_concept_id=4146536
+ WHERE 1=1 {filt}"""
 
 def sql_cultures(person_ids=None):
-    filt = ""
-    if person_ids is not None:
-        pid = _in_clause(person_ids if isinstance(person_ids, (list, tuple, set)) else [person_ids])
-        filt = f" AND s.person_id IN ({pid})"
-    return f"""
-SELECT person_id, visit_occurrence_id,
-       COALESCE(specimen_datetime, specimen_date::timestamp) AS culture_time
-FROM {CLINICAL_SCHEMA}.specimen s
-JOIN {VOCAB_SCHEMA}.concept_ancestor ca ON s.specimen_concept_id = ca.descendant_concept_id AND ca.ancestor_concept_id = {CULTURE_ANCESTOR}
-WHERE 1=1 {filt}
-"""
+    filt = f"AND s.person_id IN ({','.join(map(str, person_ids))})" if person_ids else ""
+    return f"""SELECT person_id, visit_occurrence_id, COALESCE(specimen_datetime, specimen_date) AS culture_time
+ FROM {CLINICAL_SCHEMA}.specimen s
+ JOIN {VOCAB_SCHEMA}.concept_ancestor ca ON s.specimen_concept_id=ca.descendant_concept_id AND ca.ancestor_concept_id=4042031
+ WHERE 1=1 {filt}"""
 
-def sql_urine_output(person_ids=None):
-    ids = _in_clause(URINE_OUTPUT_IDS)
-    filt = ""
-    if person_ids is not None:
-        pid = _in_clause(person_ids if isinstance(person_ids, (list, tuple, set)) else [person_ids])
-        filt = f" AND m.person_id IN ({pid})"
-    return f"""
-SELECT
-  m.person_id,
-  m.visit_occurrence_id,
-  COALESCE(m.measurement_datetime, m.measurement_date::timestamp) AS meas_time,
-  m.value_as_number AS urine_ml
-FROM {CLINICAL_SCHEMA}.measurement m
-WHERE m.measurement_concept_id IN ({ids}) {filt}
-"""
+def sql_iv_antibiotics(person_ids=None):
+    filt = f"AND de.person_id IN ({','.join(map(str, person_ids))})" if person_ids else ""
+    return f"""SELECT de.person_id, de.visit_occurrence_id,
+  COALESCE(de.drug_exposure_start_datetime, de.drug_exposure_start_date) AS start_time,
+  COALESCE(de.drug_exposure_end_datetime, de.drug_exposure_end_date) AS end_time
+ FROM {CLINICAL_SCHEMA}.drug_exposure de
+ JOIN {VOCAB_SCHEMA}.concept_ancestor ca ON de.drug_concept_id=ca.descendant_concept_id
+ WHERE ca.ancestor_concept_id=(SELECT concept_id FROM {VOCAB_SCHEMA}.concept WHERE vocabulary_id='ATC' AND concept_code='J01' LIMIT 1)
+   AND de.route_concept_id=4171047 {filt}"""
 
 def fetch_sql(conn, sql):
-    _log(f"SQL exec")
+    _log(f"SQL {len(sql)} chars")
     return pd.read_sql(sql, conn)

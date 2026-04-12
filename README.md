@@ -1,151 +1,85 @@
-# SOFA_on_OMOP
+# OMOP SOFA & Sepsis-3 Calculator â v3.1 Production
 
-Implements a Sequential Organ Failure Assessment and Sepsis-3 detector for OHDSI OMOP CDM.
+**Implements Sequential Organ Failure Assessment and Sepsis-3 on OHDSI OMOP CDM v5.4+**
 
-## Why this repo exists
+Designed for high-fidelity critical care research, multi-site consortiums, and target trial emulations. Replaces flat-file processing with direct PostgreSQL execution.
 
-Most OMOP SOFA implementations fail for the same reasons: hard-coded concept_ids, unit filtering instead of conversion, summing worst values from different times, and assuming baseline SOFA equals zero. This code enforces the original Vincent definitions and the Sepsis-3 delta SOFA rule with proper temporal logic.
+## Critical Fixes in v3.1
 
-## Repository structure
-
-```
-omop_sofa_score/
-├── README.md
-└── src/
-    ├── omop_utils.py          # concept expansion, unit conversion, derivations
-    ├── omop_calc_sofa.py          # main SOFA calculator
-    └── omop_calc_sepsis3.py    # suspected infection and Sepsis-3 evaluation
-```
-
-## What is different
-
-- **Concept sets, not IDs.** All domains expand via `concept_ancestor`. Works on any OMOP v5.4+ database.
-- **Units converted, not dropped.** Creatinine µmol/L to mg/dL, bilirubin µmol/L to mg/dL, PaO2 kPa to mmHg, FiO2 percent to fraction, platelets 10^9/L to 10^3/µL.
-- **Hourly SOFA, then daily worst.** Each organ system scored at the same hour using last observation carried forward, then max per calendar day. No Frankenstein scores.
-- **Physiology correct.** PaO2/FiO2 paired within 60 minutes, ventilation status required for respiratory 3-4, vasopressors converted to norepinephrine equivalents in µg/kg/min, MAP derived from SBP/DBP when needed, GCS summed from components, urine output summed to 24h, RRT forces renal 4.
-- **Sepsis-3 baseline fixed.** Baseline is last SOFA in -72h to -1h, not max before -48h. Baseline is never assumed zero for patients with chronic organ dysfunction.
+1. **Vasopressor rate, not quantity** â computes Âµg/kg/min from duration and weight; norepinephrine equivalents applied correctly
+2. **No aggressive FiO2=0.21** â PaO2/FiO2 paired within 120 min (configurable), no imputation
+3. **SpO2/FiO2 surrogate added** â used when PaO2 missing and SpO2 â¤97%, converted to PF equivalent via Rice equation
+4. **Concept sets, not IDs** â all labs expanded via `concept_ancestor` + LOINC codes
+5. **Unit conversion via unit_concept_id** â UCUM standard, no string parsing
+6. **GCS components summed** â falls back to Eye+Verbal+Motor when total missing
+7. **Baseline SOFA corrected** â uses min in -72h to -6h, not last value at -1h
+8. **SQL-native temporal logic** â hourly grid and LOCF via window functions, no pandas loops
 
 ## Installation
 
-Python 3.9 or higher required.
-
 ```bash
-pip install pandas numpy
+pip install pandas numpy psycopg2-binary
+git clone https://github.com/Kamaleswaran-Lab/omop_sofa_score
+cd omop_sofa_score
 ```
 
-Load your CDM into a dictionary of DataFrames:
+## Quick Start (MGH CHoRUS)
 
 ```python
-cdm = {
-    'person': person_df,
-    'visit_occurrence': visit_df,
-    'measurement': measurement_df,
-    'drug_exposure': drug_df,
-    'procedure_occurrence': procedure_df,
-    'condition_occurrence': condition_df,
-    'specimen': specimen_df,
-    'concept_ancestor': concept_ancestor_df
-}
-```
-
-## Quick start
-
-```python
-from omop_calc_sofa import compute_daily_sofa
+import psycopg2
+from src.omop_utils import set_schemas, set_verbose
+from src.omop_calc_sofa import compute_hourly_sofa, compute_daily_sofa
 from src.omop_calc_sepsis3 import compute_suspected_infection, evaluate_sepsis3
 
-# 1. Daily SOFA
-daily_sofa = compute_daily_sofa(cdm, cdm['concept_ancestor'])
+set_schemas(clinical="omopcdm", vocab="vocabulary")
+set_verbose(True)
 
-# returns: person_id, visit_occurrence_id, chartdate, total_sofa,
-# resp_sofa, cardio_sofa, neuro_sofa, hepatic_sofa, renal_sofa, coag_sofa
+conn = psycopg2.connect(dbname="mgh", user="postgres", host="...", password="...")
 
-# 2. Suspected infection
-suspected = compute_suspected_infection(cdm, cdm['concept_ancestor'])
+# Hourly SOFA with 120-min oxygenation window
+hourly = compute_hourly_sofa(conn, person_ids=[1907])
+daily = compute_daily_sofa(conn, person_ids=[1907])
 
-# 3. Sepsis-3
-sepsis3 = evaluate_sepsis3(daily_sofa, suspected, cdm, cdm['concept_ancestor'])
+# Sepsis-3
+suspected = compute_suspected_infection(conn, person_ids=[1907])
+sepsis3 = evaluate_sepsis3(hourly, suspected)
 ```
 
-## Methodology details
+## Configuration for Multi-Site
 
-### SOFA component thresholds
+```python
+from src.omop_utils import PAO2_FIO2_WINDOW_MIN, SPO2_FIO2_WINDOW_MIN
 
-| System | 0 | 1 | 2 | 3 | 4 |
-| --- | --- | --- | --- | --- | --- |
-| Respiratory PaO2/FiO2 | ≥400 | 300-399 | 200-299 | 100-199 with vent | <100 with vent |
-| Cardiovascular | MAP ≥70 | MAP <70 | Dopamine ≤5 or dobutamine any | Dopamine 5-15 or epi/norepi ≤0.1 | Dopamine >15 or epi/norepi >0.1 |
-| Neurologic GCS | 15 | 13-14 | 10-12 | 6-9 | <6 |
-| Hepatic bilirubin mg/dL | <1.2 | 1.2-1.9 | 2.0-5.9 | 6.0-11.9 | ≥12.0 |
-| Renal creatinine mg/dL or UO | <1.2 | 1.2-1.9 | 2.0-3.4 | 3.5-4.9 or UO <500ml/d | ≥5.0 or UO <200ml/d or RRT |
-| Coagulation platelets 10^3/µL | ≥150 | 100-149 | 50-99 | 20-49 | <20 |
+# Adjust for site workflow
+import src.omop_utils as u
+u.PAO2_FIO2_WINDOW_MIN = 120  # default, increase to 240 for manual charting
+u.SPO2_FIO2_WINDOW_MIN = 120
+```
 
-### Temporal rules
+## Oxygenation Logic
 
-- **LOCF windows:** MAP 2h, GCS 4h, PaO2/FiO2 4h, labs 24h
-- **Pairing:** PaO2 matched to nearest FiO2 within 60 minutes. If FiO2 missing and no oxygen device, assume 0.21
-- **Daily aggregation:** Take maximum of each component per day, sum if at least 4 components present
-- **Ventilation:** From procedure_occurrence concepts for invasive mechanical ventilation
-- **RRT:** From dialysis procedure concepts, overrides creatinine
-
-### Sepsis-3 implementation
-
-- **Suspected infection:** culture from procedure_occurrence or specimen and systemic antibiotic within -24h to +72h. Antibiotic course requires at least 2 administrations or duration over 24h
-- **Baseline SOFA:** last valid total SOFA between 72h and 1h before t_inf
-- **Acute window:** maximum total SOFA between 48h before and 24h after t_inf
-- **Delta:** window max minus baseline. Sepsis-3 equals 1 if delta is at least 2 and baseline is valid
-- **Chronic disease:** patients with cirrhosis or ESRD are flagged. Baseline is not assumed zero for these patients
-
-## Input requirements
-
-Your OMOP instance must include:
-
-- Standard vocabularies loaded and concept_ancestor populated
-- Units populated in measurement.unit_concept_id where possible
-- Drug exposure with start and end datetimes and quantity for infusions
-- Body weight measurements for µg/kg/min calculation
-
-If concept_ancestor is unavailable, the code falls back to seed concepts and will miss descendants. Performance will degrade.
+- **PaO2/FiO2**: paired within 120 min, LOCF 4h, no imputation
+- **SpO2/FiO2**: used when PaO2 missing AND SpO2 â¤97%, paired within 120 min, converted to PF equivalent: `PF = (SF*100 - 64)/0.84` (Rice 2007)
+- **Ventilation**: required for respiratory SOFA 3-4, from procedure_occurrence (concept_ancestor 4048778)
 
 ## Validation
 
-Run against Vincent 1996 test cases:
+Run Vincent 1996 test case:
+- PaO2 85, FiO2 0.5, vent â PF 170 â resp 3
+- Bilirubin 12 mg/dL â hepatic 4
+- Creatinine 3.6 â renal 3
+- Norepi 0.2 Âµg/kg/min â cardio 4
+- Platelets 45 â coag 3
+- GCS 8 â neuro 3
+Total = 20 (with correct coag scoring)
 
-- PaO2 85, FiO2 0.5, vent on → pfratio 170 → respiratory 3
-- Bilirubin 12 mg/dL → hepatic 4
-- Creatinine 3.6 mg/dL → renal 3
-- Norepinephrine 0.2 µg/kg/min → cardiovascular 4
-- Platelets 45 → coagulation 2
-- GCS 8 → neurologic 3
+## Files
 
-Total equals 19. The script reproduces this exactly.
-
-## Limitations
-
-- SpO2/FiO2 surrogate is used only when PaO2 is missing. Correlation is imperfect below SpO2 88 percent
-- Vasopressor rates depend on accurate quantity and duration in drug_exposure. Boluses are ignored
-- Sedated GCS is not imputed. Scores during deep sedation will be high. Use RASS filtered data if available
-- Urine output requires hourly charting in measurement or observation. If your site stores I/O elsewhere, modify get_urine_output_24h
-
-## Performance
-
-All heavy joins should be pushed to SQL in production. The pandas reference implementation processes about 10,000 ICU days per minute on a laptop. For full databases, rewrite the hourly grid generation as a database view with window functions.
+- `src/omop_utils.py` â schema, concepts, units, vasopressors
+- `src/omop_calc_sofa.py` â hourly/daily SOFA
+- `src/omop_calc_sepsis3.py` â suspected infection, Sepsis-3
+- `tests/test_vincent.py` â validation cases
 
 ## Citation
 
-If you use this implementation, cite the original SOFA description and Sepsis-3 definitions:
-
-- Vincent JL et al. The SOFA score to describe organ dysfunction/failure. Intensive Care Med 1996
-- Singer M et al. The Third International Consensus Definitions for Sepsis and Septic Shock. JAMA 2016
-
-And reference this repository:
-
-Kamaleswaran Lab. SOFA_on_OMOP. https://github.com/Kamaleswaran-Lab/omop_sofa_score
-
-## License
-
-Apache 2.0. See LICENSE file.
-
-## Contributing
-
-This is research code for critical care informatics. Open issues for concept set expansions, unit edge cases, or validation against your OMOP instance. Pull requests must include unit tests against the Vincent test cases.
+Vincent JL et al. Intensive Care Med 1996; Singer M et al. JAMA 2016
