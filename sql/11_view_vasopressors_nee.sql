@@ -77,12 +77,11 @@ LEFT JOIN (
     GROUP BY person_id
 ) w ON w.person_id = d.person_id
 WHERE d.drug_concept_id IN (
-    4328749,  -- norepinephrine
-    1338005,  -- epinephrine
-    1360635,  -- vasopressin (FIX #1: now included)
-    1335616,  -- phenylephrine
-    1319998   -- dopamine
-)
+       4328749, 1343916, 1349624,
+       1338005,
+       1360635, 35202042, 35202043, 45775841, 1507835, 1507838, 19039813,
+       1335616, 1319998, 1314012
+   )
 AND d.quantity > 0
 AND d.drug_exposure_start_datetime IS NOT NULL;
 
