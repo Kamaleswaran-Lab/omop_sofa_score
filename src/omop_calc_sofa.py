@@ -22,6 +22,14 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple
 import logging
 
+try:
+       from chorus_concepts import VASOPRESSOR_CONCEPTS, get_all_vasopressor_ids, get_vasopressor_type
+       USE_CHORUS = True
+   except:
+       USE_CHORUS = False
+       def get_all_vasopressor_ids():
+           return [4328749, 1338005, 1360635, 1335616, 1319998]
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
