@@ -1,1 +1,0 @@
-CREATE VIEW results.v_suspected_infection AS SELECT a.person_id, LEAST(a.abx_start,c.culture_time) AS infection_onset FROM results.v_antibiotics a JOIN results.v_cultures c ON a.person_id=c.person_id WHERE ABS(EXTRACT(EPOCH FROM (a.abx_start-c.culture_time))/3600) <= 72;

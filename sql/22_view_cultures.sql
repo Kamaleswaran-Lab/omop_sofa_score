@@ -1,1 +1,0 @@
-CREATE VIEW results.v_cultures AS SELECT m.person_id, m.measurement_datetime AS culture_time FROM cdm.measurement m JOIN vocab.concept_ancestor ca ON ca.descendant_concept_id=m.measurement_concept_id WHERE ca.ancestor_concept_id=4046263;

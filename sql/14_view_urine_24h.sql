@@ -1,1 +1,0 @@
-CREATE VIEW results.v_urine_24h AS SELECT person_id, measurement_datetime, SUM(value_as_number) OVER (PARTITION BY person_id ORDER BY measurement_datetime RANGE BETWEEN INTERVAL '24 hours' PRECEDING AND CURRENT ROW) AS urine_24h FROM cdm.measurement WHERE measurement_concept_id IN (SELECT descendant_concept_id FROM vocab.concept_ancestor WHERE ancestor_concept_id=4065485);

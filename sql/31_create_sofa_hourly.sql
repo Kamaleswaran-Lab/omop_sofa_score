@@ -1,1 +1,0 @@
-CREATE TABLE results.sofa_hourly AS SELECT person_id, visit_occurrence_id, charttime, 0 AS resp, 0 AS cardio, 0 AS neuro, 0 AS renal, 0 AS hepatic, 0 AS coag, 0 AS total_sofa FROM results.v_sofa_components;
