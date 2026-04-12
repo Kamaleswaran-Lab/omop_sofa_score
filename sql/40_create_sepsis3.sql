@@ -1,0 +1,1 @@
+CREATE TABLE results.sepsis3_cases AS SELECT si.person_id, si.infection_onset, COALESCE(MIN(sh.total_sofa),0) AS baseline_sofa FROM results.v_suspected_infection si LEFT JOIN results.sofa_hourly sh ON sh.person_id=si.person_id AND sh.charttime BETWEEN si.infection_onset - interval '72 hours' AND si.infection_onset - interval '24 hours' GROUP BY si.person_id, si.infection_onset;

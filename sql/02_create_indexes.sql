@@ -1,0 +1,1 @@
+CREATE INDEX idx_measurement_pt ON cdm.measurement(person_id, measurement_datetime); CREATE INDEX idx_drug_pt ON cdm.drug_exposure(person_id, drug_exposure_start_datetime);

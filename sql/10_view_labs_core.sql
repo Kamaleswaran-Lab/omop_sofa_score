@@ -1,0 +1,1 @@
+CREATE VIEW results.v_labs_core AS SELECT m.person_id, m.measurement_datetime, m.value_as_number, ca.ancestor_concept_id FROM cdm.measurement m JOIN vocab.concept_ancestor ca ON ca.descendant_concept_id = m.measurement_concept_id WHERE ca.ancestor_concept_id IN (3002647,3013468,3016723,3024128,3013290,4065485);

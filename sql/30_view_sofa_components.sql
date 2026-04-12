@@ -1,0 +1,1 @@
+CREATE VIEW results.v_sofa_components AS SELECT v.person_id, v.visit_occurrence_id, generate_series AS charttime FROM cdm.visit_occurrence v CROSS JOIN generate_series(v.visit_start_datetime, v.visit_end_datetime, interval '1 hour') WHERE v.visit_concept_id=32037;

@@ -1,0 +1,1 @@
+CREATE VIEW results.v_rrt AS SELECT DISTINCT person_id, procedure_datetime AS rrt_start FROM cdm.procedure_occurrence WHERE procedure_concept_id IN (SELECT descendant_concept_id FROM vocab.concept_ancestor WHERE ancestor_concept_id=4146536);
