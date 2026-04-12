@@ -200,8 +200,7 @@ class ConceptValidator:
         logger.info("=" * 70)
         
         for category, concepts in REQUIRED_CONCEPTS.items():
-            logger.info(f"
-{category}:")
+            logger.info(f"{category}:")
             logger.info("-" * 70)
             
             category_results = []
