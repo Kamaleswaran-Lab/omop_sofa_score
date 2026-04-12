@@ -39,16 +39,16 @@ def print_step(step_num, total_steps, action, details=""):
     status = f"[{step_num}/{total_steps}]"
     print(f"  {Colors.YELLOW}{status:12}{Colors.END} {action}")
     if details:
-        print(f"  {'':12} {Colors.CYAN}â {details}{Colors.END}")
+        print(f"  {'':12} {Colors.CYAN}-> {details}{Colors.END}")
 
 def print_success(message):
-    print(f"  {Colors.GREEN}â{Colors.END} {message}")
+    print(f"  {Colors.GREEN}[OK]{Colors.END} {message}")
 
 def print_warning(message):
-    print(f"  {Colors.YELLOW}â {Colors.END} {message}")
+    print(f"  {Colors.YELLOW}[WARN]{Colors.END} {message}")
 
 def print_error(message):
-    print(f"  {Colors.RED}â{Colors.END} {message}")
+    print(f"  {Colors.RED}[ERR]{Colors.END} {message}")
 
 def print_summary(stats):
     print(f"\n{Colors.BOLD}{Colors.GREEN}")
@@ -242,9 +242,9 @@ Examples:
                     fixes_in_file.append("RASS nulling")
                 
                 if fixes_in_file:
-                    print(f"  {'':12} {Colors.GREEN}â{Colors.END} Applied: {', '.join(fixes_in_file)}")
+                    print(f"  {'':12} {Colors.GREEN}[OK]{Colors.END} Applied: {', '.join(fixes_in_file)}")
                 else:
-                    print(f"  {'':12} {Colors.GREEN}â{Colors.END} Executed successfully")
+                    print(f"  {'':12} {Colors.GREEN}[OK]{Colors.END} Executed successfully")
                     
             except Exception as e:
                 print_error(f"Failed: {e}")
@@ -259,7 +259,7 @@ Examples:
         if args.dry_run:
             print(f"  {'':12} {table:20} {Colors.YELLOW}[would create]{Colors.END}")
         else:
-            print(f"  {'':12} {table:20} {Colors.GREEN}â Created{Colors.END}")
+            print(f"  {'':12} {table:20} {Colors.GREEN}[OK] Created{Colors.END}")
     
     print_step(2, 3, "Validating fixes")
     validations = [
@@ -270,7 +270,7 @@ Examples:
         ("Pre-infection baseline", "40_create_sepsis3.sql", True),
     ]
     for name, file, status in validations:
-        status_icon = "â" if status else "â"
+        status_icon = "[OK]" if status else "[FAIL]"
         color = Colors.GREEN if status else Colors.RED
         print(f"  {'':12} {color}{status_icon}{Colors.END} {name:25} ({file})")
     
@@ -292,11 +292,11 @@ Examples:
             "FiO2 window": f"{config.get('pao2_fio2_window', 240)} minutes"
         },
         "Fixes Applied": {
-            "Vasopressin included": "â YES (was excluded)",
-            "FiO2 imputation removed": "â YES (was 0.6/0.21)",
-            "Window expanded": "â YES (120â240min)",
-            "GCS RASS nulling": "â YES (was forced verbal=1)",
-            "Baseline corrected": "â YES (was last_available)"
+            "Vasopressin included": "YES (was excluded)",
+            "FiO2 imputation removed": "YES (was 0.6/0.21)",
+            "Window expanded": "YES (120->240min)",
+            "GCS RASS nulling": "YES (was forced verbal=1)",
+            "Baseline corrected": "YES (was last_available)"
         },
         "Output": {
             "SOFA hourly table": "results.sofa_hourly",
