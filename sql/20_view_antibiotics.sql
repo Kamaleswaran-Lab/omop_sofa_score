@@ -1,0 +1,7 @@
+
+-- Sepsis-3 suspected infection: antibiotics
+CREATE OR REPLACE VIEW results.v_antibiotics AS
+SELECT d.person_id, d.drug_exposure_start_datetime AS abx_start
+FROM cdm.drug_exposure d
+JOIN vocab.concept_ancestor ca ON ca.descendant_concept_id = d.drug_concept_id
+WHERE ca.ancestor_concept_id = 21600381; -- Antibacterial agents

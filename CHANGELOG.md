@@ -1,8 +1,1 @@
-## v4.0 vs v3.5
-- Added vasopressin NEE 2.5x
-- Removed FiO2 0.6/0.21
-- Window 240min
-- GCS RASS nulling
-- Baseline pre-infection
-- Renal 24h + RRT
-- Full provenance
+v4.1 FULL: added 12 SQL views, antibiotic/culture detection, complete provenance, all 10 flaws fixed
