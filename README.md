@@ -4,12 +4,6 @@
 
 Implements Sequential Organ Failure Assessment (SOFA) and Sepsis-3 criteria on OHDSI OMOP CDM v5.4+. Designed for high-fidelity target trial emulations, adaptive platform trials, and multi-center consortiums (MIMIC-IV, N3C, PCORnet).
 
-[![OMOP CDM](https://img.shields.io/badge/OMOP-CDM%20v5.4%2B-blue)](https://ohdsi.github.io/CommonDataModel/)
-[![License](https://img.shields.io/badge/license-Apache%202.0-green)](LICENSE)
-[![Python](https://img.shields.io/badge/python-3.8%2B-blue)](https://www.python.org/)
-
----
-
 ## Version 4.4 - All Critical Fixes Applied
 
 This release addresses **10 critical flaws** that systematically bias results in the original v3.5 implementation:
@@ -18,14 +12,14 @@ This release addresses **10 critical flaws** that systematically bias results in
 
 | # | Issue in v3.5 | Fix in v4.4 | Impact |
 |---|---------------|-------------|--------|
-| 1 | **Vasopressin excluded** from NEE calculations | **INCLUDED** at 2.5Ã conversion | Sickest shock patients correctly scored |
+| 1 | **Vasopressin excluded** from NEE calculations | **INCLUDED** at 2.5x conversion | Sickest shock patients correctly scored |
 | 2 | **FiO2 imputed** as 0.6 (vent) / 0.21 (non-vent) | **NO imputation** - requires real value | Eliminates false respiratory failures |
 | 3 | **120-min PaO2/FiO2 window** too narrow | **240-min window** | +65% valid P/F pairs |
-| 4 | **GCS forced verbal=1** for intubated | **RASS-aware nulling** (RASSâ¤-4 â NULL) | Distinguishes sedation from brain injury |
-| 5 | **Baseline = last_available** (prior admission) | **Pre-infection 24-72h window** | Preserves Sepsis-3 deltaâ¥2 definition |
+| 4 | **GCS forced verbal=1** for intubated | **RASS-aware nulling** (RASS<= -4 -> NULL) | Distinguishes sedation from brain injury |
+| 5 | **Baseline = last_available** (prior admission) | **Pre-infection 24-72h window** | Preserves Sepsis-3 delta>=2 definition |
 | 6 | **Hourly urine snapshots** | **Rolling 24h sum** + RRT detection | Correct renal SOFA per guidelines |
 | 7 | **Hardcoded LOINCs** | **Ancestor concepts only** | Truly portable across sites |
-| 8 | **No unit conversion** | **Explicit mcg/minâmcg/kg/min** | Prevents dosing errors |
+| 8 | **No unit conversion** | **Explicit mcg/min->mcg/kg/min** | Prevents dosing errors |
 | 9 | **Device_exposure only** for ventilation | **3-domain**: device + procedure + visit | +65% ventilation detection |
 | 10 | **15-field audit log** | **32-field provenance** | Complete reproducibility |
 
@@ -96,7 +90,10 @@ export DUKE_DB_PASSWORD="your_password"
 **NEW in v4.4: Comprehensive validation script**
 
 ```bash
-python src/validate_concepts.py   --connection-string "postgresql://researcher:${DUKE_DB_PASSWORD}@duke-db.edu/duke_omop"   --cdm-schema cdm_duke   --vocab-schema vocab
+python src/validate_concepts.py \
+  --connection-string "postgresql://researcher:${DUKE_DB_PASSWORD}@duke-db.edu/duke_omop" \
+  --cdm-schema cdm_duke \
+  --vocab-schema vocab
 ```
 
 **Expected output:**
@@ -108,41 +105,41 @@ OMOP SOFA Concept Validation
 
 Core Labs:
 ----------------------------------------------------------------------
-  â  3002647 | PaO2 (arterial oxygen)                    | descendants:  1245 | records: 1,234,567
-  â  3013468 | FiO2 (fraction inspired oxygen)          | descendants:   892 | records:   987,654
-  â  3016723 | Creatinine                                | descendants:   456 | records: 2,345,678
+  [OK]  3002647 | PaO2 (arterial oxygen)                    | descendants:  1245 | records: 1,234,567
+  [OK]  3013468 | FiO2 (fraction inspired oxygen)          | descendants:   892 | records:   987,654
+  [OK]  3016723 | Creatinine                                | descendants:   456 | records: 2,345,678
 
 Vasopressors (FIX #1):
 ----------------------------------------------------------------------
-  â  4328749 | Norepinephrine                           | descendants:    15 | records:    45,231
-  â  1338005 | Epinephrine                              | descendants:    12 | records:     8,456
-  â  1360635 | Vasopressin (CRITICAL - was excluded)    | descendants:    15 | records:    12,456
-  â  1335616 | Phenylephrine                            | descendants:     8 | records:     3,211
+  [OK]  4328749 | Norepinephrine                           | descendants:    15 | records:    45,231
+  [OK]  1338005 | Epinephrine                              | descendants:    12 | records:     8,456
+  [OK]  1360635 | Vasopressin (CRITICAL - was excluded)    | descendants:    15 | records:    12,456
+  [OK]  1335616 | Phenylephrine                            | descendants:     8 | records:     3,211
 
 Neurological (FIX #4):
 ----------------------------------------------------------------------
-  â  4253928 | Glasgow Coma Scale                       | descendants:    23 | records:   567,890
-  â  40488434| RASS (Richmond Agitation-Sedation)       | descendants:     5 | records:   234,567
+  [OK]  4253928 | Glasgow Coma Scale                       | descendants:    23 | records:   567,890
+  [OK]  40488434| RASS (Richmond Agitation-Sedation)       | descendants:     5 | records:   234,567
 
 ======================================================================
 VALIDATION SUMMARY
 ======================================================================
 
 Concepts found: 16/16
-â All critical concepts present
+[OK] All critical concepts present
 
 Data availability:
   Core Labs                 6/6 concepts have data (100%)
   Vasopressors              5/5 concepts have data (100%)
   Neurological              2/2 concepts have data (100%)
 
-â Validation complete
+[OK] Validation complete
 ```
 
 **If vasopressin is missing:**
 ```
-  â  1360635 | Vasopressin (CRITICAL) | descendants: 0 | records: 0
-  â  CRITICAL: Vasopressin missing! Cardio SOFA will be wrong
+  [FAIL]  1360635 | Vasopressin (CRITICAL) | descendants: 0 | records: 0
+  [WARN] CRITICAL: Vasopressin missing! Cardio SOFA will be wrong
 ```
 
 ### 5. Initialize Database
@@ -289,7 +286,7 @@ import pandas as pd
 
 calc = Sepsis3Calculator()
 
-# Find infections (antibiotics + culture â¤72h)
+# Find infections (antibiotics + culture <=72h)
 infections = calc.find_suspected_infections(
     antibiotics_df,
     cultures_df
@@ -341,16 +338,19 @@ vasopressor_nee:
 
 **Usage:**
 ```bash
-python src/validate_concepts.py   --connection-string "postgresql://user:pass@host/db"   --cdm-schema cdm   --vocab-schema vocab
+python src/validate_concepts.py \
+  --connection-string "postgresql://user:pass@host/db" \
+  --cdm-schema cdm \
+  --vocab-schema vocab
 ```
 
 **Checks:**
-- â Core labs (PaO2, FiO2, creatinine, bilirubin, platelets, urine)
-- â Vasopressors (including vasopressin - critical!)
-- â Ventilation concepts
-- â Neurological (GCS, RASS)
-- â Sepsis-3 (antibiotics, cultures)
-- â Support concepts (weight, MAP)
+- [OK] Core labs (PaO2, FiO2, creatinine, bilirubin, platelets, urine)
+- [OK] Vasopressors (including vasopressin - critical!)
+- [OK] Ventilation concepts
+- [OK] Neurological (GCS, RASS)
+- [OK] Sepsis-3 (antibiotics, cultures)
+- [OK] Support concepts (weight, MAP)
 
 **Exit codes:**
 - `0` = All critical concepts present
@@ -387,7 +387,7 @@ result = calc.calculate_sofa(patient_data_dict)
 **Features:**
 - Finds suspected infections (abx + culture)
 - Calculates pre-infection baseline (FIX #5)
-- Identifies SOFA increase â¥2
+- Identifies SOFA increase >=2
 - Detects septic shock
 
 **Key methods:**
@@ -453,8 +453,8 @@ Sepsis-3 incident cases
 | Column | Type | Description |
 |--------|------|-------------|
 | person_id | BIGINT | |
-| infection_onset | TIMESTAMP | Abx + culture â¤72h |
-| sepsis_onset | TIMESTAMP | First deltaâ¥2 |
+| infection_onset | TIMESTAMP | Abx + culture <=72h |
+| sepsis_onset | TIMESTAMP | First delta>=2 |
 | baseline_sofa | INTEGER | **FIX #5**: Pre-infection |
 | peak_sofa | INTEGER | |
 | delta_sofa | INTEGER | Peak - baseline |
@@ -465,7 +465,7 @@ Complete audit trail (32 fields)
 Tracks every decision:
 - `fio2_imputed` (should be FALSE - FIX #2)
 - `vasopressin_included` (should be TRUE - FIX #1)
-- `fio2_delta_minutes` (should be â¤240 - FIX #3)
+- `fio2_delta_minutes` (should be <=240 - FIX #3)
 - `gcs_method` ('rass_null' if sedated - FIX #4)
 - `baseline_method` ('pre_infection_72h' - FIX #5)
 
@@ -484,7 +484,7 @@ SELECT
 FROM results.sofa_assumptions
 WHERE vasopressin_dose > 0;
 
--- Should return >0 patients with cardio_score â¥3
+-- Should return >0 patients with cardio_score >=3
 
 -- 2. No FiO2 imputation (FIX #2)
 SELECT COUNT(*) 
@@ -500,7 +500,7 @@ SELECT
 FROM results.sofa_assumptions
 WHERE fio2_delta_minutes IS NOT NULL;
 
--- max_delta should be â¤240
+-- max_delta should be <=240
 
 -- 4. RASS nulling (FIX #4)
 SELECT 
@@ -582,7 +582,7 @@ sql/
 **This is correct** - v4.4 does not impute (FIX #2)
 
 ### "All neuro scores NULL"
-**Cause:** All patients have RASS â¤-4 (deeply sedated)
+**Cause:** All patients have RASS <= -4 (deeply sedated)
 **This is correct** - FIX #4 prevents scoring sedated patients
 
 ### "Sepsis-3 cases = 0"
