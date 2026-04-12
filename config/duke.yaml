@@ -1,0 +1,24 @@
+site_name: "DUKE"
+schemas:
+  clinical: "cdm"
+  vocabulary: "vocab"
+  results: "results"
+database:
+  dbname: "omop"
+  user: "researcher"
+  host: "localhost"
+  password: "${OMOP_PASSWORD}"
+  port: 5432
+pragmatic_mode: false
+concept_mode: "ancestor"
+fio2_imputation: "none"
+fio2_locf_hours: 6
+baseline_strategy: "pre_infection_72h"
+pao2_fio2_window: 240
+chunk_size: 500
+vasopressor_nee:
+  norepinephrine: 1.0
+  epinephrine: 1.0
+  vasopressin: 2.5
+  phenylephrine: 0.1
+  dopamine: 0.01
