@@ -1,1 +1,2 @@
-def test_sofa(): assert True
+def test_sofa():
+    assert True

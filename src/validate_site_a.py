@@ -29,7 +29,7 @@ CHORUS_CONCEPTS = {
             'sofa': True
         },
         'platelets': {
-            'ids': [3024929, 3013290, 3024386, 3016682],  # 3024929 is SITE_A primary (489k)
+            'ids': [3024929, 3013290, 3024386, 3016682],
             'name': 'Platelets',
             'site_a_count': 489315,
             'unit': '10^3/uL',
@@ -37,7 +37,7 @@ CHORUS_CONCEPTS = {
             'note': 'SITE_A uses 3024929, not 3013290'
         },
         'lactate': {
-            'ids': [3047181, 3014111, 3022250, 3008037],  # SITE_A has 145k total
+            'ids': [3047181, 3014111, 3022250, 3008037],
             'name': 'Lactate',
             'site_a_count': 145613,
             'unit': 'mmol/L',
@@ -45,7 +45,7 @@ CHORUS_CONCEPTS = {
             'note': '3047181 (blood) + 3014111 (serum)'
         },
         'pao2': {
-            'ids': [3027315, 3039426, 3011367, 44786762, 3002647],  # 3027315 is SITE_A primary
+            'ids': [3027315, 3039426, 3011367, 44786762, 3002647],
             'name': 'PaO2',
             'site_a_count': 7974,
             'unit': 'mmHg',
@@ -136,10 +136,10 @@ class ChorusValidator:
         """Connect to PostgreSQL - prompts for password"""
         try:
             self.conn = psycopg2.connect(self.conn_string)
-            print(f"â Connected to SITE_A OMOP CDM")
+            print("Connected to SITE_A OMOP CDM")
             return True
         except Exception as e:
-            print(f"â Connection failed: {e}")
+            print(f"Connection failed: {e}")
             return False
     
     def validate_labs(self):
@@ -170,7 +170,7 @@ class ChorusValidator:
                 expected = lab['site_a_count']
                 diff_pct = abs(actual - expected) / expected * 100 if expected > 0 else 0
                 
-                status = "â" if diff_pct < 10 else "â " if diff_pct < 25 else "â"
+                status = "OK" if diff_pct < 10 else "WARN" if diff_pct < 25 else "FAIL"
                 
                 results.append({
                     'Lab': lab['name'],
@@ -185,10 +185,10 @@ class ChorusValidator:
                 
                 print(f"{status} {lab['name']:<20} Expected: {expected:>9,} | Actual: {actual:>9,} | {diff_pct:>5.1f}% diff")
                 if lab.get('note'):
-                    print(f"  â {lab['note']}")
+                    print(f"  -> {lab['note']}")
                     
             except Exception as e:
-                print(f"â {lab['name']}: {e}")
+                print(f"FAIL {lab['name']}: {e}")
         
         return pd.DataFrame(results)
     
@@ -210,9 +210,9 @@ class ChorusValidator:
                 df = pd.read_sql(query, self.conn)
                 actual = df.iloc[0]['n']
                 expected = vital['site_a_count']
-                print(f"â {vital['name']:<25} {actual:>12,} records (expected ~{expected:,})")
+                print(f"OK {vital['name']:<25} {actual:>12,} records (expected ~{expected:,})")
             except Exception as e:
-                print(f"â {vital['name']}: {e}")
+                print(f"FAIL {vital['name']}: {e}")
     
     def check_pao2_fio2_ratio(self):
         """Check PaO2/FiO2 availability for respiratory SOFA"""
@@ -269,11 +269,11 @@ class ChorusValidator:
             try:
                 df = pd.read_sql(sql, self.conn)
                 if 'COUNT' in sql.upper():
-                    print(f"â {name:<35} {df.iloc[0,0]:,}")
+                    print(f"OK {name:<35} {df.iloc[0,0]:,}")
                 else:
-                    print(f"â {name:<35} {df.iloc[0,0]} to {df.iloc[0,1]}")
+                    print(f"OK {name:<35} {df.iloc[0,0]} to {df.iloc[0,1]}")
             except Exception as e:
-                print(f"â {name}: {e}")
+                print(f"FAIL {name}: {e}")
     
     def generate_sofa_query(self):
         """Generate SOFA query with SITE_A IDs"""
@@ -330,7 +330,6 @@ def main():
     print(f"Run date: {datetime.now().strftime('%Y-%m-%d %H:%M')}")
     print()
     
-    # Connection string - password will be prompted
     conn_str = "postgresql://postgres@psql-chorus-main.postgres.database.azure.com/site_a"
     
     validator = ChorusValidator(conn_str)
@@ -339,7 +338,6 @@ def main():
         return
     
     try:
-        # Run validations
         validator.check_data_quality()
         labs_df = validator.validate_labs()
         validator.validate_vitals()
@@ -352,10 +350,10 @@ def main():
         print("="*70)
         print("
 Key SITE_A findings:")
-        print("â¢ Platelets: USE 3024929 (489k), not 3013290 (8k)")
-        print("â¢ Lactate: USE 3047181 + 3014111 (146k total)")
-        print("â¢ PaO2: USE 3027315 (8k), not 3002647")
-        print("â¢ Creatinine 549k and Bilirubin 239k are correct for SITE_A ICU")
+        print("- Platelets: USE 3024929 (489k), not 3013290 (8k)")
+        print("- Lactate: USE 3047181 + 3014111 (146k total)")
+        print("- PaO2: USE 3027315 (8k), not 3002647")
+        print("- Creatinine 549k and Bilirubin 239k are correct for SITE_A ICU")
         
     finally:
         validator.close()

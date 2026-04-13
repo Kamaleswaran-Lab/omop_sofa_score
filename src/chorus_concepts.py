@@ -12,22 +12,27 @@ PAO2_CONCEPTS = [
     44786762,   # O2 sat calc mixed venous - 22,775
     3002647,    # Standard PaO2 (fallback)
     3021706,
+    4097772,
+    4103460,
 ]
 
 FIO2_CONCEPTS = [
-    4353936,      # Inspired oxygen concentration - Site A 1,495,269 PRIMARY
+    4353936,    # Inspired oxygen concentration - Site A 1,495,269 PRIMARY
     3020719,
     3013465,
+    2147482989,
 ]
 
 CREATININE_CONCEPTS = [
-    3016723,   # Creatinine [Mass/volume] in Serum or Plasma - Site A 549,112 PRIMARY
+    3016723,    # Creatinine [Mass/volume] in Serum or Plasma - Site A 549,112 PRIMARY
     3051825,
     3020564,
+    4324383,
+    2212294,
 ]
 
 BILIRUBIN_CONCEPTS = [
-    3024128,   # Bilirubin.total - Site A 239,317 PRIMARY
+    3024128,    # Bilirubin.total - Site A 239,317 PRIMARY
     3035616,
     3014661,
 ]
@@ -36,26 +41,35 @@ PLATELETS_CONCEPTS = [
     3024929,    # Platelets [#/volume] in Blood by Automated count - Site A 489,315 PRIMARY
     3024386,    # Platelet mean volume - Site A 481,004
     3013290,    # Standard platelets (fallback) - Site A 7,974
-    3016682,
+    3016682,    # Platelets in Plasma - 354
+    40772688,
+    40779159,
+    4094430,
+    4304094,
 ]
 
 LACTATE_CONCEPTS = [
-    3047181,   # Lactate [Moles/volume] in Blood - Site A 78,297 PRIMARY
-    3014111,   # Lactate in Serum or Plasma - Site A 67,316 PRIMARY
-    3022250,   # Lactate dehydrogenase - 32,653
-    3008037,
+    3047181,    # Lactate [Moles/volume] in Blood - Site A 78,297 PRIMARY
+    3014111,    # Lactate in Serum or Plasma - Site A 67,316 PRIMARY
+    3022250,    # Lactate dehydrogenase - 32,653
+    3008037,    # Lactate in Venous blood - 2
+    4133534,    # Original IDs (fallback)
+    4307161,
+    4213582,
+    4191725,
+    1246795,
 ]
 
 URINE_OUTPUT_CONCEPTS = [4264378]
 
 # VASOPRESSORS
 VASOPRESSOR_CONCEPTS = {
-    'norepinephrine': [4328749, 1321341, 19010309],
-    'epinephrine': [1338005, 19076899],
-    'vasopressin': [1360635, 35202042],
+    'norepinephrine': [4328749, 1321341, 19010309, 740244, 740243],
+    'epinephrine': [1338005, 19076899, 19123434],
+    'vasopressin': [35202042, 35202043, 45775841, 1507835, 1507838, 19039813, 1360635],
     'phenylephrine': [1135766],
-    'dopamine': [1319998, 1337860],
-    'dobutamine': [1337720],
+    'dopamine': [1319998, 1337860, 40240699, 40240703, 42799680, 42799676],
+    'dobutamine': [1337720, 19076659],
 }
 
 VASOPRESSOR_NEE_FACTORS = {
@@ -106,5 +120,6 @@ def get_sofa_lab_ids():
         'bilirubin': BILIRUBIN_CONCEPTS,
         'platelets': PLATELETS_CONCEPTS,
         'pao2': PAO2_CONCEPTS,
-        'fio2': FIO2_CONCEPTS
+        'fio2': FIO2_CONCEPTS,
+        'lactate': LACTATE_CONCEPTS,
     }

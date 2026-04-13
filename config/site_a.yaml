@@ -6,7 +6,7 @@ schemas:
 database:
   dbname: "site_a_omop"
   user: "postgres"
-  host: "your-host"
+  host: "psql-chorus-main.postgres.database.azure.com"
   password: "${SITE_A_DB_PASSWORD}"
   port: 5432
 pragmatic_mode: false

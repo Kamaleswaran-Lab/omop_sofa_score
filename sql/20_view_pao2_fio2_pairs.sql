@@ -17,7 +17,7 @@ fio2 AS (
             ELSE value_as_number 
         END AS fio2
     FROM omopcdm.measurement
-    WHERE measurement_concept_id IN (4353936, 3020719)
+    WHERE measurement_concept_id IN (4353936, 3020719, 3013465)
     AND value_as_number BETWEEN 0.21 AND 100
 )
 SELECT 
