@@ -9,6 +9,11 @@ database:
   host: "psql-chorus-main.postgres.database.azure.com"
   password: "${SITE_A_DB_PASSWORD}"
   port: 5432
+# A-specific mortality handling
+mortality:
+  source_table: "omopcdm.death"
+  death_type_concept_id: 32817  # EHR
+  do_not_use: "visit_occurrence.discharged_to_concept_id"   
 pragmatic_mode: false
 concept_mode: "ancestor"
 fio2_imputation: "none"
