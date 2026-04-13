@@ -1,4 +1,3 @@
--- Suspected infection onset (antibiotics + culture)
 DROP VIEW IF EXISTS results_site_a.vw_infection_onset CASCADE;
 
 CREATE OR REPLACE VIEW results_site_a.vw_infection_onset AS
