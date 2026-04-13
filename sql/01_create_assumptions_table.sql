@@ -43,6 +43,11 @@ CREATE TABLE results_site_a.sofa_assumptions (
     platelets_value NUMERIC,
     -- Lactate
     lactate_value NUMERIC,
+    death_date DATE,
+    death_type_concept_id INTEGER,
+    died_30d BOOLEAN,
+    died_in_hospital BOOLEAN,
+    mortality_source VARCHAR(20) DEFAULT 'omop_death'  -- not 'discharge',
     -- Baseline tracking
     baseline_sofa INTEGER,
     baseline_method VARCHAR(50),
