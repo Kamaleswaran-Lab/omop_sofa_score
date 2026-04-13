@@ -1,0 +1,16 @@
+-- 24-hour rolling urine output
+DROP VIEW IF EXISTS results_site_a.vw_urine_24h CASCADE;
+
+CREATE OR REPLACE VIEW results_site_a.vw_urine_24h AS
+SELECT 
+    person_id,
+    measurement_datetime AS charttime,
+    value_as_number AS urine_hourly,
+    SUM(value_as_number) OVER (
+        PARTITION BY person_id 
+        ORDER BY measurement_datetime 
+        RANGE BETWEEN INTERVAL '24 hours' PRECEDING AND CURRENT ROW
+    ) AS urine_24h
+FROM omopcdm.measurement
+WHERE measurement_concept_id = 4264378  -- Urine output - 2,203,519 records
+AND value_as_number IS NOT NULL;
