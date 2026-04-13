@@ -1,1 +1,0 @@
-CREATE SCHEMA IF NOT EXISTS results_site_a;
