@@ -32,6 +32,30 @@ class Sepsis3Calculator:
                 })
         
         return pd.DataFrame(infections)
+
+    def calculate_sepsis3_enhanced(self, sofa_df, infection_df):
+        """v4.5: 96h culture, 48h collapse, ICU onset"""
+        # Merge SOFA with infections
+        merged = infection_df.merge(sofa_df, on='person_id', how='left')
+    
+        # Calculate baseline (72h pre) and peak (48h post)
+        merged['baseline_sofa'] = merged.apply(
+            lambda r: sofa_df[(sofa_df.charttime >= r.baseline_start) &
+                             (sofa_df.charttime <= r.infection_onset)]['total_sofa'].min(), axis=1)
+        merged['peak_sofa'] = merged.apply(
+            lambda r: sofa_df[(sofa_df.charttime >= r.infection_onset) &
+                             (sofa_df.charttime <= r.organ_dysfunction_end)]['total_sofa'].max(), axis=1)
+    
+        merged['delta_sofa'] = merged['peak_sofa'] - merged['baseline_sofa']
+        sepsis = merged[merged['delta_sofa'] >= 2].copy()
+    
+        # 48h collapse
+        sepsis = sepsis.sort_values(['person_id','infection_onset'])
+        sepsis['prev'] = sepsis.groupby('person_id')['infection_onset'].shift()
+        sepsis = sepsis[sepsis['prev'].isna() |
+                       (sepsis['infection_onset'] - sepsis['prev'] > pd.Timedelta(hours=48))]
+    
+        return sepsis
     
     def calculate_sepsis3(self, infections_df, sofa_scores_df):
         """Calculate Sepsis-3 with pre-infection baseline"""
