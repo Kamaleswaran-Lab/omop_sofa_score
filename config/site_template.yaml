@@ -13,7 +13,7 @@ sepsis_enhanced:
   culture_window_hours: 96
   collapse_hours: 48
   require_icu_onset: true
-  hospice_concept_ids: [8546] # MGH uses 8546; change per site
+  hospice_concept_ids: [8546] change per site
   outcome_window_days: 30
   use_discharged_to: true # OMOP uses discharged_to_concept_id
 pragmatic_mode: false
