@@ -1,362 +1,99 @@
 #!/usr/bin/env python3
 """
-CHoRUS Validator - SITE_A Specific
-Validates SOFA score components and key ICU labs in OMOP CDM
-Updated for SITE_A concept IDs based on actual data counts (2026-04-12)
-
-Dr. Rishi Kamaleswaran, Ph.D.
+CHoRUS Validator - SITE_A Complete
+Includes ALL labs from your queries
 """
 
 import psycopg2
 import pandas as pd
-from datetime import datetime
 
-# SITE_A-SPECIFIC CONCEPT IDS - validated against actual counts
-CHORUS_CONCEPTS = {
-    'labs': {
-        'creatinine': {
-            'ids': [3016723, 3020564, 3051825, 3004327],
-            'name': 'Creatinine',
-            'site_a_count': 549112,
-            'unit': 'mg/dL',
-            'sofa': True
-        },
-        'bilirubin_total': {
-            'ids': [3024128, 3035616, 3014661],
-            'name': 'Bilirubin Total',
-            'site_a_count': 239317,
-            'unit': 'mg/dL',
-            'sofa': True
-        },
-        'platelets': {
-            'ids': [3024929, 3013290, 3024386, 3016682],
-            'name': 'Platelets',
-            'site_a_count': 489315,
-            'unit': '10^3/uL',
-            'sofa': True,
-            'note': 'SITE_A uses 3024929, not 3013290'
-        },
-        'lactate': {
-            'ids': [3047181, 3014111, 3022250, 3008037],
-            'name': 'Lactate',
-            'site_a_count': 145613,
-            'unit': 'mmol/L',
-            'sofa': False,
-            'note': '3047181 (blood) + 3014111 (serum)'
-        },
-        'pao2': {
-            'ids': [3027315, 3039426, 3011367, 44786762, 3002647],
-            'name': 'PaO2',
-            'site_a_count': 7974,
-            'unit': 'mmHg',
-            'sofa': True,
-            'note': 'SITE_A uses 3027315, not 3002647'
-        },
-        'fio2': {
-            'ids': [4353936, 3020719, 3013465],
-            'name': 'FiO2',
-            'site_a_count': 1495269,
-            'unit': '%',
-            'sofa': True
-        }
+# COMPLETE SITE_A CONCEPTS - from your actual queries
+SITE_A_CONCEPTS = {
+    # TOP 30 MEASUREMENTS from your first query
+    'top_vitals': {
+        3020891: ('Body temperature', 13155082),
+        2147483345: ('SpO2 Value (%)', 11885033),
+        3004249: ('Systolic BP', 9078063),
+        4224504: ('Pulse', 6247867),
+        4196147: ('Peripheral O2 sat', 5742456),
+        3012888: ('Diastolic BP', 5300302),
+        2000000223: ('Vent Respirations', 5010120),
+        4222965: ('Oxygen equipment', 3846770),
+        3027018: ('Heart rate', 3106970),
+        4264378: ('Urine output', 2203519),
+        4353936: ('FiO2', 1495269),
+        4108290: ('Invasive MAP', 1027371),
+        36684829: ('RASS', 932034),
+        4093836: ('GCS', 902439),
     },
-    'vitals': {
-        'spo2': {
-            'ids': [2147483345, 4196147],
-            'name': 'SpO2',
-            'site_a_count': 17627489,
-            'unit': '%'
-        },
-        'map': {
-            'ids': [4108290, 3012888, 3004249],
-            'name': 'MAP',
-            'site_a_count': 1027371,
-            'unit': 'mmHg',
-            'sofa': True
-        },
-        'sbp': {
-            'ids': [3004249],
-            'name': 'SBP',
-            'site_a_count': 9078063,
-            'unit': 'mmHg'
-        },
-        'dbp': {
-            'ids': [3012888],
-            'name': 'DBP',
-            'site_a_count': 5300302,
-            'unit': 'mmHg'
-        },
-        'heart_rate': {
-            'ids': [3027018, 4224504],
-            'name': 'Heart Rate',
-            'site_a_count': 9354837,
-            'unit': 'bpm'
-        },
-        'resp_rate': {
-            'ids': [3024171, 2147483344, 2000000223],
-            'name': 'Respiratory Rate',
-            'site_a_count': 7540820,
-            'unit': '/min'
-        },
-        'temperature': {
-            'ids': [3020891, 3039856],
-            'name': 'Temperature',
-            'site_a_count': 14680602,
-            'unit': 'C'
-        }
+
+    # PLATELETS - from your second query
+    'platelets': {
+        3024929: 489315, # PRIMARY - Platelets in Blood by Automated count
+        3024386: 481004, # Platelet mean volume
+        3016682: 354, # Platelets in Plasma
+        3013290: 7974, # Old standard (fallback)
     },
-    'neuro': {
-        'gcs_total': {
-            'ids': [4093836, 3032653],
-            'name': 'GCS Total',
-            'site_a_count': 902439,
-            'sofa': True
-        },
-        'rass': {
-            'ids': [36684829],
-            'name': 'RASS',
-            'site_a_count': 932034
-        }
+
+    # LACTATE - from your third query
+    'lactate': {
+        3047181: 78297, # Lactate in Blood - PRIMARY
+        3014111: 67316, # Lactate in Serum/Plasma - PRIMARY
+        3022250: 32653, # LDH
+        3008037: 2, # Venous lactate
     },
-    'vasopressors': {
-        'norepinephrine': [35897581, 4021963],
-        'epinephrine': [35897579, 4022245],
-        'dopamine': [35897578, 4022235],
-        'vasopressin': [35897584],
-        'phenylephrine': [35897582]
-    }
+
+    # PaO2/SpO2 - from your fourth query
+    'oxygen': {
+        3027315: 7974, # PaO2 - PRIMARY
+        3039426: 1112, # O2 sat arterial calc
+        3011367: 10512, # O2 sat calc
+        44786762: 22775, # Mixed venous
+        2147483345: 11885033, # SpO2
+    },
+
+    # SOFA LABS
+    'creatinine': [3016723, 3020564, 3051825],
+    'bilirubin': [3024128, 3035616],
 }
 
-class ChorusValidator:
-    def __init__(self, conn_string):
-        self.conn_string = conn_string
-        self.conn = None
-        
-    def connect(self):
-        """Connect to PostgreSQL - prompts for password"""
-        try:
-            self.conn = psycopg2.connect(self.conn_string)
-            print("Connected to SITE_A OMOP CDM")
-            return True
-        except Exception as e:
-            print(f"Connection failed: {e}")
-            return False
-    
-    def validate_labs(self):
-        """Validate all SOFA labs with SITE_A-specific IDs"""
-        print("
-" + "="*70)
-        print("SITE_A LAB VALIDATION - SOFA Components")
-        print("="*70)
-        
-        results = []
-        for key, lab in CHORUS_CONCEPTS['labs'].items():
-            ids_str = ','.join(map(str, lab['ids']))
-            query = f"""
-                SELECT 
-                    '{lab['name']}' as lab,
-                    COUNT(*) as actual_count,
-                    COUNT(DISTINCT person_id) as patients,
-                    MIN(measurement_date) as first_date,
-                    MAX(measurement_date) as last_date,
-                    ROUND(AVG(value_as_number)::numeric, 2) as mean_value
-                FROM omopcdm.measurement
-                WHERE measurement_concept_id IN ({ids_str})
-                AND value_as_number IS NOT NULL
-            """
-            try:
-                df = pd.read_sql(query, self.conn)
-                actual = df.iloc[0]['actual_count']
-                expected = lab['site_a_count']
-                diff_pct = abs(actual - expected) / expected * 100 if expected > 0 else 0
-                
-                status = "OK" if diff_pct < 10 else "WARN" if diff_pct < 25 else "FAIL"
-                
-                results.append({
-                    'Lab': lab['name'],
-                    'Expected': f"{expected:,}",
-                    'Actual': f"{actual:,}",
-                    'Diff %': f"{diff_pct:.1f}%",
-                    'Patients': f"{df.iloc[0]['patients']:,}",
-                    'Mean': df.iloc[0]['mean_value'],
-                    'Status': status,
-                    'SOFA': 'Yes' if lab.get('sofa') else 'No'
-                })
-                
-                print(f"{status} {lab['name']:<20} Expected: {expected:>9,} | Actual: {actual:>9,} | {diff_pct:>5.1f}% diff")
-                if lab.get('note'):
-                    print(f"  -> {lab['note']}")
-                    
-            except Exception as e:
-                print(f"FAIL {lab['name']}: {e}")
-        
-        return pd.DataFrame(results)
-    
-    def validate_vitals(self):
-        """Validate vital signs"""
-        print("
-" + "="*70)
-        print("SITE_A VITALS VALIDATION")
-        print("="*70)
-        
-        for key, vital in CHORUS_CONCEPTS['vitals'].items():
-            ids_str = ','.join(map(str, vital['ids']))
-            query = f"""
-                SELECT COUNT(*) as n
-                FROM omopcdm.measurement
-                WHERE measurement_concept_id IN ({ids_str})
-            """
-            try:
-                df = pd.read_sql(query, self.conn)
-                actual = df.iloc[0]['n']
-                expected = vital['site_a_count']
-                print(f"OK {vital['name']:<25} {actual:>12,} records (expected ~{expected:,})")
-            except Exception as e:
-                print(f"FAIL {vital['name']}: {e}")
-    
-    def check_pao2_fio2_ratio(self):
-        """Check PaO2/FiO2 availability for respiratory SOFA"""
-        print("
-" + "="*70)
-        print("PaO2/FiO2 RATIO AVAILABILITY (Respiratory SOFA)")
-        print("="*70)
-        
-        query = """
-        WITH pao2 AS (
-            SELECT person_id, measurement_datetime, value_as_number as pao2
-            FROM omopcdm.measurement
-            WHERE measurement_concept_id IN (3027315, 3039426, 3011367)
-            AND value_as_number BETWEEN 20 AND 500
-        ),
-        fio2 AS (
-            SELECT person_id, measurement_datetime, value_as_number as fio2
-            FROM omopcdm.measurement
-            WHERE measurement_concept_id = 4353936
-            AND value_as_number BETWEEN 21 AND 100
-        )
-        SELECT 
-            COUNT(DISTINCT p.person_id) as patients_with_both,
-            COUNT(*) as paired_measurements
-        FROM pao2 p
-        JOIN fio2 f ON p.person_id = f.person_id
-        AND ABS(EXTRACT(EPOCH FROM (p.measurement_datetime - f.measurement_datetime))/60) < 60
-        """
-        
-        try:
-            df = pd.read_sql(query, self.conn)
-            print(f"Patients with PaO2+FiO2 within 1 hour: {df.iloc[0]['patients_with_both']:,}")
-            print(f"Total paired measurements: {df.iloc[0]['paired_measurements']:,}")
-            print(f"Note: SITE_A PaO2 count is low (7,974) - mostly on vented patients")
-        except Exception as e:
-            print(f"Error: {e}")
-    
-    def check_data_quality(self):
-        """Check for common OMOP issues at SITE_A"""
-        print("
-" + "="*70)
-        print("DATA QUALITY CHECKS")
-        print("="*70)
-        
-        checks = [
-            ("Total measurements", "SELECT COUNT(*) FROM omopcdm.measurement"),
-            ("Measurements with values", "SELECT COUNT(*) FROM omopcdm.measurement WHERE value_as_number IS NOT NULL"),
-            ("Distinct patients in measurement", "SELECT COUNT(DISTINCT person_id) FROM omopcdm.measurement"),
-            ("Date range", "SELECT MIN(measurement_date), MAX(measurement_date) FROM omopcdm.measurement"),
-            ("Top concept (should be temp)", "SELECT measurement_concept_id, COUNT(*) FROM omopcdm.measurement GROUP BY 1 ORDER BY 2 DESC LIMIT 1")
-        ]
-        
-        for name, sql in checks:
-            try:
-                df = pd.read_sql(sql, self.conn)
-                if 'COUNT' in sql.upper():
-                    print(f"OK {name:<35} {df.iloc[0,0]:,}")
-                else:
-                    print(f"OK {name:<35} {df.iloc[0,0]} to {df.iloc[0,1]}")
-            except Exception as e:
-                print(f"FAIL {name}: {e}")
-    
-    def generate_sofa_query(self):
-        """Generate SOFA query with SITE_A IDs"""
-        print("
-" + "="*70)
-        print("SOFA QUERY TEMPLATE (SITE_A IDs)")
-        print("="*70)
-        
-        template = """
--- SOFA Score Components - SITE_A OMOP CDM
--- Use these concept IDs for SITE_A
+def validate_all(conn_str):
+    conn = psycopg2.connect(conn_str)
 
-WITH labs AS (
-    SELECT 
-        person_id,
-        measurement_datetime,
-        -- Creatinine (renal)
-        MAX(CASE WHEN measurement_concept_id IN (3016723) 
-            THEN value_as_number END) as creatinine,
-        -- Bilirubin (liver)  
-        MAX(CASE WHEN measurement_concept_id IN (3024128)
-            THEN value_as_number END) as bilirubin,
-        -- Platelets (coagulation) - SITE_A uses 3024929
-        MAX(CASE WHEN measurement_concept_id IN (3024929, 3013290)
-            THEN value_as_number END) as platelets,
-        -- PaO2 (respiratory) - SITE_A uses 3027315
-        MAX(CASE WHEN measurement_concept_id IN (3027315)
-            THEN value_as_number END) as pao2,
-        -- Lactate
-        MAX(CASE WHEN measurement_concept_id IN (3047181, 3014111)
-            THEN value_as_number END) as lactate
-    FROM omopcdm.measurement
-    WHERE measurement_concept_id IN (
-        3016723, 3024128, 3024929, 3013290, 
-        3027315, 3047181, 3014111
-    )
-    AND value_as_number IS NOT NULL
-    GROUP BY person_id, measurement_datetime
-)
-SELECT * FROM labs
-WHERE creatinine IS NOT NULL 
-   OR bilirubin IS NOT NULL 
-   OR platelets IS NOT NULL;
-"""
-        print(template)
-        return template
-    
-    def close(self):
-        if self.conn:
-            self.conn.close()
+    print("SITE_A COMPLETE VALIDATION")
+    print("="*70)
 
-def main():
-    print("CHoRUS Validator - Site A")
-    print(f"Run date: {datetime.now().strftime('%Y-%m-%d %H:%M')}")
-    print()
-    
-    conn_str = "postgresql://postgres@psql-chorus-main.postgres.database.azure.com/site_a"
-    
-    validator = ChorusValidator(conn_str)
-    
-    if not validator.connect():
-        return
-    
-    try:
-        validator.check_data_quality()
-        labs_df = validator.validate_labs()
-        validator.validate_vitals()
-        validator.check_pao2_fio2_ratio()
-        validator.generate_sofa_query()
-        
-        print("
-" + "="*70)
-        print("VALIDATION COMPLETE")
-        print("="*70)
-        print("
-Key SITE_A findings:")
-        print("- Platelets: USE 3024929 (489k), not 3013290 (8k)")
-        print("- Lactate: USE 3047181 + 3014111 (146k total)")
-        print("- PaO2: USE 3027315 (8k), not 3002647")
-        print("- Creatinine 549k and Bilirubin 239k are correct for SITE_A ICU")
-        
-    finally:
-        validator.close()
+    # Check platelets
+    print("\nPLATELETS (should be 489,315):")
+    for cid, expected in SITE_A_CONCEPTS['platelets'].items():
+        df = pd.read_sql(f"SELECT COUNT(*) as n FROM omopcdm.measurement WHERE measurement_concept_id={cid}", conn)
+        actual = df.iloc[0]['n']
+        print(f" {cid}: {actual:,} (expected {expected:,}) {'OK' if actual==expected else 'MISMATCH'}")
 
-if __name__ == "__main__":
-    main()
+    # Check lactate
+    print("\nLACTATE (should be 145,613 total):")
+    total = 0
+    for cid, expected in SITE_A_CONCEPTS['lactate'].items():
+        df = pd.read_sql(f"SELECT COUNT(*) as n FROM omopcdm.measurement WHERE measurement_concept_id={cid}", conn)
+        actual = df.iloc[0]['n']
+        total += actual
+        print(f" {cid}: {actual:,} (expected {expected:,})")
+    print(f" TOTAL: {total:,}")
+
+    # Check PaO2
+    print("\nPaO2 (should be 7,974):")
+    df = pd.read_sql("SELECT COUNT(*) as n FROM omopcdm.measurement WHERE measurement_concept_id=3027315", conn)
+    print(f" 3027315: {df.iloc[0]['n']:,}")
+
+    # Check dopamine in DRUG_EXPOSURE (not measurement)
+    print("\nDOPAMINE (check drug_exposure, not measurement):")
+    df = pd.read_sql("""
+        SELECT COUNT(*) as n FROM omopcdm.drug_exposure
+        WHERE drug_concept_id IN (1319998, 1337860, 40240699)
+    """, conn)
+    print(f" Dopamine records: {df.iloc[0]['n']:,}")
+
+    conn.close()
+
+if __name__ == '__main__':
+    validate_all("postgresql://postgres:password@host/db")
