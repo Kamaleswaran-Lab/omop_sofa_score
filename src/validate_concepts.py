@@ -1,8 +1,13 @@
 #!/usr/bin/env python3
-import argparse, psycopg2, pandas as pd
-from chorus_concepts import *
+import argparse
+import psycopg2
+import pandas as pd
+from chorus_concepts import (
+    PAO2_CONCEPTS, FIO2_CONCEPTS, CREATININE_CONCEPTS,
+    BILIRUBIN_CONCEPTS, PLATELETS_CONCEPTS, LACTATE_CONCEPTS
+)
 
-def validate(conn_str, cdm_schema, vocab_schema):
+def validate(conn_str, cdm_schema):
     conn = psycopg2.connect(conn_str)
     print("="*70)
     print("OMOP SOFA Concept Validation - Site A")
@@ -18,17 +23,17 @@ def validate(conn_str, cdm_schema, vocab_schema):
     ]
     
     for name, cid, expected in checks:
-        df = pd.read_sql(f"SELECT COUNT(*) as n FROM {cdm_schema}.measurement WHERE measurement_concept_id={cid}", conn)
+        query = f"SELECT COUNT(*) as n FROM {cdm_schema}.measurement WHERE measurement_concept_id = {cid}"
+        df = pd.read_sql(query, conn)
         actual = df.iloc[0]['n']
-        status = "OK" if abs(actual-expected)/expected < 0.1 else "WARN"
+        status = "OK" if abs(actual - expected) / expected < 0.1 else "WARN"
         print(f"[{status}] {name:12} {cid:>9} | expected {expected:>9,} | actual {actual:>9,}")
     
     conn.close()
 
 if __name__ == "__main__":
-    p = argparse.ArgumentParser()
-    p.add_argument("--connection-string", required=True)
-    p.add_argument("--cdm-schema", default="omopcdm")
-    p.add_argument("--vocab-schema", default="vocabulary")
-    a = p.parse_args()
-    validate(a.connection_string, a.cdm_schema, a.vocab_schema)
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--connection-string", required=True)
+    parser.add_argument("--cdm-schema", default="omopcdm")
+    args = parser.parse_args()
+    validate(args.connection_string, args.cdm_schema)

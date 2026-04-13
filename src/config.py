@@ -16,7 +16,3 @@ def load_config(site_name=None):
             env_var = pwd[2:-1]
             config['database']['password'] = os.getenv(env_var, '')
     return config
-
-def get_connection_string(config):
-    db = config['database']
-    return f"postgresql://{db['user']}:{db['password']}@{db['host']}:{db['port']}/{db['dbname']}"
