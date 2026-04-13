@@ -9,6 +9,6 @@ SELECT
     d.drug_concept_id,
     c.concept_name AS drug_name
 FROM omopcdm.drug_exposure d
-JOIN omopcdm.vocabulary.concept_ancestor ca ON d.drug_concept_id = ca.descendant_concept_id
-JOIN omopcdm.vocabulary.concept c ON d.drug_concept_id = c.concept_id
+JOIN vocabulary.concept_ancestor ca ON d.drug_concept_id = ca.descendant_concept_id
+JOIN vocabulary.concept c ON d.drug_concept_id = c.concept_id
 WHERE ca.ancestor_concept_id = 21600381;  -- Antibiotic ancestor
