@@ -136,16 +136,15 @@ class ChorusValidator:
         """Connect to PostgreSQL - prompts for password"""
         try:
             self.conn = psycopg2.connect(self.conn_string)
-            print(f"â Connected to MGH OMOP CDM")
+            print(f"✓ Connected to MGH OMOP CDM")
             return True
         except Exception as e:
-            print(f"â Connection failed: {e}")
+            print(f"✗ Connection failed: {e}")
             return False
     
     def validate_labs(self):
         """Validate all SOFA labs with MGH-specific IDs"""
-        print("
-" + "="*70)
+        print("\n" + "="*70)
         print("MGH LAB VALIDATION - SOFA Components")
         print("="*70)
         
@@ -170,7 +169,7 @@ class ChorusValidator:
                 expected = lab['mgh_count']
                 diff_pct = abs(actual - expected) / expected * 100 if expected > 0 else 0
                 
-                status = "â" if diff_pct < 10 else "â " if diff_pct < 25 else "â"
+                status = "✓" if diff_pct < 10 else "⚠️" if diff_pct < 25 else "✗"
                 
                 results.append({
                     'Lab': lab['name'],
@@ -185,17 +184,16 @@ class ChorusValidator:
                 
                 print(f"{status} {lab['name']:<20} Expected: {expected:>9,} | Actual: {actual:>9,} | {diff_pct:>5.1f}% diff")
                 if lab.get('note'):
-                    print(f"  â {lab['note']}")
+                    print(f"  → {lab['note']}")
                     
             except Exception as e:
-                print(f"â {lab['name']}: {e}")
+                print(f"✗ {lab['name']}: {e}")
         
         return pd.DataFrame(results)
     
     def validate_vitals(self):
         """Validate vital signs"""
-        print("
-" + "="*70)
+        print("\n" + "="*70)
         print("MGH VITALS VALIDATION")
         print("="*70)
         
@@ -210,14 +208,13 @@ class ChorusValidator:
                 df = pd.read_sql(query, self.conn)
                 actual = df.iloc[0]['n']
                 expected = vital['mgh_count']
-                print(f"â {vital['name']:<25} {actual:>12,} records (expected ~{expected:,})")
+                print(f"✓ {vital['name']:<25} {actual:>12,} records (expected ~{expected:,})")
             except Exception as e:
-                print(f"â {vital['name']}: {e}")
+                print(f"✗ {vital['name']}: {e}")
     
     def check_pao2_fio2_ratio(self):
         """Check PaO2/FiO2 availability for respiratory SOFA"""
-        print("
-" + "="*70)
+        print("\n" + "="*70)
         print("PaO2/FiO2 RATIO AVAILABILITY (Respiratory SOFA)")
         print("="*70)
         
@@ -252,8 +249,7 @@ class ChorusValidator:
     
     def check_data_quality(self):
         """Check for common OMOP issues at MGH"""
-        print("
-" + "="*70)
+        print("\n" + "="*70)
         print("DATA QUALITY CHECKS")
         print("="*70)
         
@@ -269,16 +265,15 @@ class ChorusValidator:
             try:
                 df = pd.read_sql(sql, self.conn)
                 if 'COUNT' in sql.upper():
-                    print(f"â {name:<35} {df.iloc[0,0]:,}")
+                    print(f"✓ {name:<35} {df.iloc[0,0]:,}")
                 else:
-                    print(f"â {name:<35} {df.iloc[0,0]} to {df.iloc[0,1]}")
+                    print(f"✓ {name:<35} {df.iloc[0,0]} to {df.iloc[0,1]}")
             except Exception as e:
-                print(f"â {name}: {e}")
+                print(f"✗ {name}: {e}")
     
     def generate_sofa_query(self):
         """Generate SOFA query with MGH IDs"""
-        print("
-" + "="*70)
+        print("\n" + "="*70)
         print("SOFA QUERY TEMPLATE (MGH IDs)")
         print("="*70)
         
@@ -346,16 +341,14 @@ def main():
         validator.check_pao2_fio2_ratio()
         validator.generate_sofa_query()
         
-        print("
-" + "="*70)
+        print("\n" + "="*70)
         print("VALIDATION COMPLETE")
         print("="*70)
-        print("
-Key MGH findings:")
-        print("â¢ Platelets: USE 3024929 (489k), not 3013290 (8k)")
-        print("â¢ Lactate: USE 3047181 + 3014111 (146k total)")
-        print("â¢ PaO2: USE 3027315 (8k), not 3002647")
-        print("â¢ Creatinine 549k and Bilirubin 239k are correct for MGH ICU")
+        print("\nKey MGH findings:")
+        print("• Platelets: USE 3024929 (489k), not 3013290 (8k)")
+        print("• Lactate: USE 3047181 + 3014111 (146k total)")
+        print("• PaO2: USE 3027315 (8k), not 3002647")
+        print("• Creatinine 549k and Bilirubin 239k are correct for MGH ICU")
         
     finally:
         validator.close()
