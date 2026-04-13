@@ -1,0 +1,23 @@
+site_name: "Site A"
+schemas:
+  clinical: "omopcdm"
+  vocabulary: "vocabulary"
+  results: "results_site_a"
+database:
+  dbname: "site_a_omop"
+  user: "postgres"
+  host: "psql-chorus-main.postgres.database.azure.com"
+  password: "${SITE_A_DB_PASSWORD}"
+  port: 5432
+pragmatic_mode: false
+concept_mode: "ancestor"
+fio2_imputation: "none"
+baseline_strategy: "pre_infection_72h"
+pao2_fio2_window: 240
+chunk_size: 500
+vasopressor_nee:
+  norepinephrine: 1.0
+  epinephrine: 1.0
+  vasopressin: 2.5
+  phenylephrine: 0.1
+  dopamine: 0.01
