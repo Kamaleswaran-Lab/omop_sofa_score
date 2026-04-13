@@ -13,9 +13,9 @@ Use the table below to choose. Both pipelines require `results_site_a.sofa_hourl
 | You must have culture within 72h of antibiotics | Your site has variable culture timing (use 96h window) |
 | You want 1:1 comparison to original validation cohorts | You want to avoid double-counting antibiotic courses |
 | Regulatory or methods paper | Multi-center OMOP, MIMIC, N3C, CHoRUS, PCORnet |
-| Accepts lower sensitivity (~2.7% prevalence at MGH) | Accepts higher sensitivity (~14.5% prevalence at MGH) |
+| Accepts lower sensitivity (~2.7% prevalence at Site A) | Accepts higher sensitivity (~14.5% prevalence at Site A) |
 
-**Rule of thumb:** run standard for the primary methods definition, run enhanced for the sensitivity analysis and for any operational dashboard. At MGH, the enhanced version matches clinical expectation.
+**Rule of thumb:** run standard for the primary methods definition, run enhanced for the sensitivity analysis and for any operational dashboard. At Site A, the enhanced version matches clinical expectation.
 
 ## What changed in v4.5
 
@@ -33,7 +33,7 @@ Use the table below to choose. Both pipelines require `results_site_a.sofa_hourl
 4. **30-day composite outcome**
    - death_30d from omopcdm.death
    - hospice_30d from visit_occurrence.discharged_to_concept_id
-   - MGH uses concept 8546 = Hospice (not 38003568/9)
+   - Sita A uses concept 8546 = Hospice (not 38003568/9)
 
 5. **Future date exclusion**
    - Drops infection_onset >= CURRENT_DATE (removes test data)
@@ -49,13 +49,13 @@ python src/run_sofa_chunked.py --site site_a
 
 ### Option A: Standard v4.4
 ```bash
-psql "postgresql://postgres:PASSWORD@host/mgh" -f sql/RUN_ALL.sql
+psql "postgresql://postgres:PASSWORD@host/siteA" -f sql/RUN_ALL.sql
 # Creates: results_site_a.sepsis3_cases
 ```
 
-### Option B: Enhanced v4.5 (recommended for MGH)
+### Option B: Enhanced v4.5 (recommended for Sita A)
 ```bash
-psql "postgresql://postgres:PASSWORD@host/mgh"   -v cdm_schema=omopcdm   -v vocab_schema=vocabulary   -v results_schema=results_site_a   -f sql/RUN_ALL_enhanced.sql
+psql "postgresql://postgres:PASSWORD@host/SiteA"   -v cdm_schema=omopcdm   -v vocab_schema=vocabulary   -v results_schema=results_site_a   -f sql/RUN_ALL_enhanced.sql
 # Creates:
 #  - view_infection_onset_enhanced
 #  - sepsis3_enhanced
@@ -66,7 +66,7 @@ psql "postgresql://postgres:PASSWORD@host/mgh"   -v cdm_schema=omopcdm   -v voca
 
 Download the enhanced script: RUN_ALL_enhanced_v4.5.sql
 
-## MGH-specific configuration
+## Site A-specific configuration
 
 Edit your site yaml or pass as psql variables:
 
@@ -74,7 +74,7 @@ Edit your site yaml or pass as psql variables:
 sepsis_enhanced:
   culture_window_hours: 96
   collapse_hours: 48
-  hospice_concept_ids: [8546]  # MGH uses 8546
+  hospice_concept_ids: [8546]  # Site A uses 8546
   use_discharged_to: true      # OMOP field is discharged_to_concept_id
 ```
 
@@ -87,7 +87,7 @@ WHERE discharged_to_concept_id IS NOT NULL
 GROUP BY 1,2 ORDER BY 3 DESC LIMIT 10;
 ```
 
-## Expected outputs (MGH validation 2026-04-13)
+## Expected outputs (Site A validation 2026-04-13)
 
 Run after enhanced pipeline:
 ```sql
@@ -135,10 +135,10 @@ sql/
 
 **High episode count before collapse:** normal. Run the collapse table, check 48h logic.
 
-**Hospice not counted:** confirm you use `discharged_to_concept_id` not `discharge_to_concept_id`, and your site's hospice concept (MGH 8546).
+**Hospice not counted:** confirm you use `discharged_to_concept_id` not `discharge_to_concept_id`, and your site's hospice concept (e.g. 8546).
 
 **Future dates:** enhanced view filters `infection_onset < CURRENT_DATE` automatically.
 
 ## Version history
 - v4.4: strict Sepsis-3, 10 critical fixes
-- v4.5: adds enhanced pragmatic pipeline, 48h collapse, 30d death/hospice, MGH hospice support
+- v4.5: adds enhanced pragmatic pipeline, 48h collapse, 30d death/hospice, hospice support
