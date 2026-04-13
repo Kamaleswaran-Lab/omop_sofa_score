@@ -1,16 +1,25 @@
 """
 chorus_concepts.py
-CHoRUS-specific OMOP concept overrides
-Place in src/
+MGH CHoRUS - FINAL SOFA/Sepsis-3 concept mappings
 """
 
+# SOFA COMPONENTS
+PAO2_CONCEPTS = [3002647, 3021706, 4097772, 4103460, 4094585, 3038071, 1616654]
+FIO2_CONCEPTS = [4353936, 2147482989, 3026238]
+CREATININE_CONCEPTS = [3016723, 3051825, 3020564, 4324383, 2212294]
+BILIRUBIN_CONCEPTS = [3024128]
+PLATELETS_CONCEPTS = [3013290, 40772688, 40779159, 4094430, 4304094]
+URINE_OUTPUT_CONCEPTS = [4264378]
+LACTATE_CONCEPTS = [4133534, 4307161, 4213582, 4191725, 1246795]
+
+# VASOPRESSORS (for NEE calculation)
 VASOPRESSOR_CONCEPTS = {
-    'norepinephrine': [4328749, 1343916, 1349624],
-    'epinephrine': [1338005],
-    'vasopressin': [1360635, 35202042, 35202043, 45775841, 1507835, 1507838, 19039813],
-    'phenylephrine': [1335616],
-    'dopamine': [1319998],
-    'dobutamine': [1314012],
+    'norepinephrine': [4328749, 1321341, 19010309, 740244, 740243],
+    'epinephrine': [1338005, 19076899, 19123434],
+    'vasopressin': [35202042, 35202043, 45775841, 1507835, 1507838, 19039813],
+    'phenylephrine': [1135766],
+    'dopamine': [1319998, 1337860, 40240699, 40240703, 42799680, 42799676],
+    'dobutamine': [1337720, 19076659],
 }
 
 VASOPRESSOR_NEE_FACTORS = {
@@ -22,18 +31,27 @@ VASOPRESSOR_NEE_FACTORS = {
     'dobutamine': 0.01,
 }
 
+# VENTILATION
+VENTILATOR_DEVICE_CONCEPTS = [4222965]
+VENTILATOR_PROCEDURE_CONCEPTS = [4202832, 42738694]
+
+# NEUROLOGICAL
+GCS_CONCEPTS = [4093836, 3016335, 3009094, 3008223]
+RASS_CONCEPTS = [36684829]
+
+# RENAL
+DIALYSIS_CONCEPTS = [4197217, 2109463]
+
+# SEPSIS-3
+CULTURE_CONCEPTS = [4046263, 4299649, 4189544, 4098207, 4029193, 4015188, 4296650]
+ANTIBIOTIC_ANCESTOR = 21600381
+
+# SUPPORT
+MAP_CONCEPTS = [4108290, 36303772]
+WEIGHT_CONCEPTS = [4099154, 4086522]
+
 def get_all_vasopressor_ids():
     ids = []
     for lst in VASOPRESSOR_CONCEPTS.values():
         ids.extend(lst)
     return list(set(ids))
-
-def get_vasopressor_type(concept_id):
-    for name, ids in VASOPRESSOR_CONCEPTS.items():
-        if concept_id in ids:
-            return name
-    return 'unknown'
-
-def get_nee_factor(concept_id):
-    drug_type = get_vasopressor_type(concept_id)
-    return VASOPRESSOR_NEE_FACTORS.get(drug_type, 0.0)
