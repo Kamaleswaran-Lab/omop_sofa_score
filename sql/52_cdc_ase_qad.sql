@@ -1,8 +1,7 @@
 
 -- 52_cdc_ase_qad.sql
 -- Qualifying Antimicrobial Days (QAD) per CDC
--- Requires drug_exposure with antimicrobial concepts
--- FIXED: date arithmetic for PostgreSQL
+-- FIXED v2: no window functions in WHERE
 
 DROP TABLE IF EXISTS :results_schema.cdc_ase_drug_days;
 CREATE TABLE :results_schema.cdc_ase_drug_days AS
@@ -18,13 +17,11 @@ JOIN :results_schema.cdc_ase_antimicrobial_concepts ac ON ac.concept_id = de.dru
 JOIN :vocab_schema.concept c ON c.concept_id = de.drug_concept_id
 WHERE de.visit_occurrence_id IS NOT NULL;
 
--- Collapse to QAD logic
 DROP TABLE IF EXISTS :results_schema.cdc_ase_qad;
 CREATE TABLE :results_schema.cdc_ase_qad AS
 WITH ordered AS (
   SELECT *,
-    LAG(drug_day) OVER (PARTITION BY person_id, visit_occurrence_id, drug_concept_id ORDER BY drug_day) AS prev_day_same,
-    LAG(drug_day) OVER (PARTITION BY person_id, visit_occurrence_id ORDER BY drug_day, drug_concept_id) AS prev_any_day
+    LAG(drug_day) OVER (PARTITION BY person_id, visit_occurrence_id, drug_concept_id ORDER BY drug_day) AS prev_day_same
   FROM :results_schema.cdc_ase_drug_days
 ),
 new_starts AS (
@@ -34,24 +31,9 @@ new_starts AS (
       ELSE 0
     END AS is_new_antimicrobial
   FROM ordered
-),
-qad_flagged AS (
-  SELECT *,
-    SUM(is_new_antimicrobial) OVER (PARTITION BY person_id, visit_occurrence_id ORDER BY drug_day ROWS UNBOUNDED PRECEDING) AS antimicrobial_episode
-  FROM new_starts
 )
-SELECT 
-  person_id,
-  visit_occurrence_id,
-  drug_day,
-  drug_concept_id,
-  drug_name,
-  route_category,
-  is_new_antimicrobial,
-  antimicrobial_episode
-FROM qad_flagged;
+SELECT * FROM new_starts;
 
--- Build 4-day sequences
 DROP TABLE IF EXISTS :results_schema.cdc_ase_presumed_infection;
 CREATE TABLE :results_schema.cdc_ase_presumed_infection AS
 WITH bc AS (
@@ -64,44 +46,51 @@ qad_window AS (
     bc.culture_date,
     q.drug_day,
     q.route_category,
-    q.is_new_antimicrobial,
-    CASE WHEN q.drug_day BETWEEN bc.culture_date - 2 AND bc.culture_date + 2 THEN 1 ELSE 0 END AS in_window
+    q.is_new_antimicrobial
   FROM bc
   JOIN :results_schema.cdc_ase_qad q 
     ON q.person_id = bc.person_id AND q.visit_occurrence_id = bc.visit_occurrence_id
+  WHERE q.drug_day BETWEEN bc.culture_date - 2 AND bc.culture_date + 2
 ),
-first_new_in_window AS (
+first_iv AS (
   SELECT person_id, visit_occurrence_id, culture_date,
-    MIN(drug_day) FILTER (WHERE in_window=1 AND is_new_antimicrobial=1 AND route_category='IV') AS first_iv_new_day
+    MIN(drug_day) AS first_iv_new_day
   FROM qad_window
+  WHERE is_new_antimicrobial = 1 AND route_category = 'IV'
   GROUP BY 1,2,3
 ),
-consecutive_qad AS (
+eligible_qad AS (
   SELECT 
-    w.person_id, w.visit_occurrence_id, w.culture_date,
-    w.drug_day,
-    ROW_NUMBER() OVER (PARTITION BY w.person_id, w.visit_occurrence_id, w.culture_date ORDER BY w.drug_day) AS rn,
-    -- FIXED: use date - integer arithmetic properly
-    w.drug_day - (ROW_NUMBER() OVER (PARTITION BY w.person_id, w.visit_occurrence_id, w.culture_date ORDER BY w.drug_day) * INTERVAL '1 day') AS grp
-  FROM qad_window w
-  JOIN first_new_in_window f USING (person_id, visit_occurrence_id, culture_date)
-  WHERE f.first_iv_new_day IS NOT NULL
-    AND w.drug_day >= f.first_iv_new_day
-    AND w.drug_day BETWEEN f.first_iv_new_day AND f.first_iv_new_day + INTERVAL '10 days'
+    qw.person_id, qw.visit_occurrence_id, qw.culture_date, qw.drug_day,
+    f.first_iv_new_day
+  FROM qad_window qw
+  JOIN first_iv f USING (person_id, visit_occurrence_id, culture_date)
+  JOIN :results_schema.cdc_ase_qad q2 
+    ON q2.person_id = qw.person_id 
+    AND q2.visit_occurrence_id = qw.visit_occurrence_id
+    AND q2.drug_day = qw.drug_day
+  WHERE qw.drug_day >= f.first_iv_new_day
+),
+-- Find consecutive sequences
+with_groups AS (
+  SELECT *,
+    drug_day - (ROW_NUMBER() OVER (PARTITION BY person_id, visit_occurrence_id, culture_date ORDER BY drug_day) * INTERVAL '1 day') AS grp
+  FROM eligible_qad
+),
+group_counts AS (
+  SELECT person_id, visit_occurrence_id, culture_date, grp,
+    COUNT(*) AS consecutive_days,
+    MIN(drug_day) AS seq_start,
+    MAX(drug_day) AS seq_end,
+    MAX(first_iv_new_day) AS first_iv
+  FROM with_groups
+  GROUP BY 1,2,3,4
+  HAVING COUNT(*) >= 4
 )
 SELECT 
   person_id, visit_occurrence_id, culture_date,
-  MIN(drug_day) AS first_qad_date,
-  COUNT(*) AS qad_count,
-  MAX(drug_day) AS last_qad_date,
-  MAX(first_iv_new_day) AS first_iv_new_day
-FROM (
-  SELECT c.*, f.first_iv_new_day,
-    COUNT(*) OVER (PARTITION BY person_id, visit_occurrence_id, culture_date, grp) AS consecutive_days
-  FROM consecutive_qad c
-  JOIN first_new_in_window f USING (person_id, visit_occurrence_id, culture_date)
-) t
-WHERE consecutive_days >= 4
-  AND MIN(drug_day) OVER (PARTITION BY person_id, visit_occurrence_id, culture_date) 
-      BETWEEN culture_date - INTERVAL '2 days' AND culture_date + INTERVAL '2 days'
-GROUP BY person_id, visit_occurrence_id, culture_date;
+  seq_start AS first_qad_date,
+  consecutive_days AS qad_count,
+  seq_end AS last_qad_date,
+  first_iv AS first_iv_new_day
+FROM group_counts;
