@@ -1,174 +1,47 @@
 -- 56_cdc_ase_cohort_final.sql
+-- PURPOSE: Final ASE cohort with outcomes and organ support flags
+-- FIXES: correct ICU detection, use corrected vasopressor/vent views
 
--- 1. Vasopressors: concept IDs 1343916 (epinephrine), 1321341 (norepinephrine)
--- 2. Removed quantity filter (99.7% NULL at )
--- 3. Ventilation: using intubation codes 4202832, 4058031 as proxy (no mechanical vent codes in OMOP)
--- 4. Date handling: onset_date::timestamp for interval math (DATE to TIMESTAMP conversion)
-
-DROP TABLE IF EXISTS :results_schema.cdc_ase_cohort_final;
-
-CREATE TABLE :results_schema.cdc_ase_cohort_final AS
-WITH ase_base AS (
-    SELECT 
-        person_id,
-        visit_occurrence_id,
-        culture_date,
-        first_qad_date,
-        first_od_date,
-        onset_date,
-        qad_count,
-        od_types,
-        visit_start_date,
-        visit_end_date,
-        visit_concept_id,
-        visit_type,
-        hospital_day_onset,
-        onset_type,
-        year,
-        baseline_sofa,
-        sofa_at_onset,
-        max_sofa_24h,
-        max_sofa_48h,
-        max_sofa_72h,
-        max_sofa_7d,
-        delta_sofa_72h,
-        max_resp_72h,
-        max_cardio_72h,
-        max_renal_72h,
-        max_coag_72h,
-        max_liver_72h,
-        max_cns_72h,
-        meets_sepsis3,
-        sofa_severity
-    FROM :results_schema.cdc_ase_with_sofa
-),
-vaso AS (
-    SELECT DISTINCT
-        a.person_id,
-        a.visit_occurrence_id,
-        1 AS vasopressor_72h
-    FROM ase_base a
-    INNER JOIN :cdm_schema.drug_exposure de 
-        ON de.person_id = a.person_id
-    WHERE de.drug_concept_id IN (1343916, 1321341)
-      AND de.drug_exposure_start_datetime >= (a.onset_date::timestamp - INTERVAL '1 day')
-      AND de.drug_exposure_start_datetime < (a.onset_date::timestamp + INTERVAL '3 days')
-),
-vent AS (
-    SELECT DISTINCT
-        a.person_id,
-        a.visit_occurrence_id,
-        1 AS mechanical_vent_72h
-    FROM ase_base a
-    INNER JOIN :cdm_schema.procedure_occurrence po
-        ON po.person_id = a.person_id
-    WHERE po.procedure_concept_id IN (4202832, 4058031)
-      AND po.procedure_datetime >= (a.onset_date::timestamp - INTERVAL '1 day')
-      AND po.procedure_datetime < (a.onset_date::timestamp + INTERVAL '3 days')
-),
-icu AS (
-    SELECT DISTINCT
-        a.person_id,
-        a.visit_occurrence_id,
-        1 AS icu_72h
-    FROM ase_base a
-    INNER JOIN :cdm_schema.visit_detail vd
-        ON vd.person_id = a.person_id
-    WHERE vd.visit_detail_concept_id IN (32037, 581379, 581476, 3265857, 3265858, 3265859)
-      AND vd.visit_detail_start_datetime >= (a.onset_date::timestamp - INTERVAL '1 day')
-      AND vd.visit_detail_start_datetime < (a.onset_date::timestamp + INTERVAL '3 days')
-),
-mortality AS (
-    SELECT 
-        a.person_id,
-        a.visit_occurrence_id,
-        CASE 
-            WHEN d.death_date IS NOT NULL 
-                AND d.death_date >= a.onset_date 
-                AND d.death_date <= (a.onset_date + 30)
-            THEN 1 ELSE 0 
-        END AS death_30d,
-        CASE 
-            WHEN d.death_date IS NOT NULL 
-                AND d.death_date >= a.visit_start_date 
-                AND d.death_date <= a.visit_end_date
-            THEN 1 ELSE 0 
-        END AS death_in_hospital
-    FROM ase_base a
-    LEFT JOIN :cdm_schema.death d 
-        ON d.person_id = a.person_id
+DROP TABLE IF EXISTS omop_cdm.ase_cohort_final CASCADE;
+CREATE TABLE omop_cdm.ase_cohort_final AS
+WITH icu_stays AS (
+  SELECT DISTINCT vd.person_id, vd.visit_occurrence_id
+  FROM omop_cdm.visit_detail vd
+  JOIN omop_sofa.assumptions a ON a.domain='icu' AND a.concept_id = vd.visit_detail_concept_id
 )
 SELECT
-    a.person_id,
-    a.visit_occurrence_id,
-    a.culture_date,
-    a.first_qad_date,
-    a.first_od_date,
-    a.onset_date,
-    a.qad_count,
-    a.od_types,
-    a.visit_start_date,
-    a.visit_end_date,
-    a.visit_concept_id,
-    a.visit_type,
-    a.hospital_day_onset,
-    a.onset_type,
-    a.year,
-    a.baseline_sofa,
-    a.sofa_at_onset,
-    a.max_sofa_24h,
-    a.max_sofa_48h,
-    a.max_sofa_72h,
-    a.max_sofa_7d,
-    a.delta_sofa_72h,
-    a.max_resp_72h,
-    a.max_cardio_72h,
-    a.max_renal_72h,
-    a.max_coag_72h,
-    a.max_liver_72h,
-    a.max_cns_72h,
-    a.meets_sepsis3,
-    a.sofa_severity,
-    COALESCE(vs.vasopressor_72h, 0) AS vasopressor_72h,
-    COALESCE(vt.mechanical_vent_72h, 0) AS mechanical_vent_72h,
-    COALESCE(i.icu_72h, 0) AS icu_72h,
-    COALESCE(m.death_30d, 0) AS death_30d,
-    COALESCE(m.death_in_hospital, 0) AS death_in_hospital
-FROM ase_base a
-LEFT JOIN vaso vs 
-    ON vs.person_id = a.person_id 
-    AND vs.visit_occurrence_id = a.visit_occurrence_id
-LEFT JOIN vent vt 
-    ON vt.person_id = a.person_id 
-    AND vt.visit_occurrence_id = a.visit_occurrence_id
-LEFT JOIN icu i 
-    ON i.person_id = a.person_id 
-    AND i.visit_occurrence_id = a.visit_occurrence_id
-LEFT JOIN mortality m 
-    ON m.person_id = a.person_id 
-    AND m.visit_occurrence_id = a.visit_occurrence_id;
+  ac.person_id,
+  ac.visit_occurrence_id,
+  ac.infection_onset,
+  vo.visit_start_datetime AS admit_time,
+  vo.visit_end_datetime AS discharge_time,
+  -- organ support flags within ASE window
+  MAX(CASE WHEN v.start_datetime BETWEEN ac.infection_onset - INTERVAL '2 days' AND ac.infection_onset + INTERVAL '2 days' THEN 1 ELSE 0 END) AS vasopressor_flag,
+  MAX(CASE WHEN vent.start_datetime BETWEEN ac.infection_onset - INTERVAL '2 days' AND ac.infection_onset + INTERVAL '2 days' THEN 1 ELSE 0 END) AS vent_flag,
+  MAX(CASE WHEN icu.person_id IS NOT NULL THEN 1 ELSE 0 END) AS icu_flag,
+  -- outcomes
+  CASE WHEN vo.discharge_to_concept_id = 4216643 THEN 1 ELSE 0 END AS death_in_hosp,
+  vo.visit_end_date - ac.infection_onset::date AS los_days
+FROM omop_cdm.ase_cases ac
+JOIN omop_cdm.visit_occurrence vo ON vo.visit_occurrence_id = ac.visit_occurrence_id
+LEFT JOIN omop_sofa.vasopressors_nee v ON v.person_id = ac.person_id
+LEFT JOIN omop_sofa.ventilation vent ON vent.person_id = ac.person_id
+LEFT JOIN icu_stays icu ON icu.person_id = ac.person_id AND icu.visit_occurrence_id = ac.visit_occurrence_id
+GROUP BY ac.person_id, ac.visit_occurrence_id, ac.infection_onset, vo.visit_start_datetime, vo.visit_end_datetime, vo.discharge_to_concept_id, vo.visit_end_date
+;
 
--- Create indexes for performance
-CREATE INDEX idx_ase_final_person ON :results_schema.cdc_ase_cohort_final (person_id);
-CREATE INDEX idx_ase_final_visit ON :results_schema.cdc_ase_cohort_final (visit_occurrence_id);
-CREATE INDEX idx_ase_final_onset ON :results_schema.cdc_ase_cohort_final (onset_date);
-CREATE INDEX idx_ase_final_year ON :results_schema.cdc_ase_cohort_final (year);
-
--- Summary statistics
-SELECT 
-    'Cohort Summary' AS metric,
-    COUNT(*) AS total_episodes,
-    COUNT(DISTINCT person_id) AS unique_patients,
-    ROUND(AVG(max_sofa_72h)::numeric, 2) AS mean_sofa_72h,
-    ROUND(AVG(delta_sofa_72h)::numeric, 2) AS mean_delta_sofa,
-    SUM(vasopressor_72h) AS vasopressor_count,
-    ROUND((100.0 * SUM(vasopressor_72h) / NULLIF(COUNT(*),0))::numeric, 1) AS vasopressor_pct,
-    SUM(mechanical_vent_72h) AS vent_count,
-    ROUND((100.0 * SUM(mechanical_vent_72h) / NULLIF(COUNT(*),0))::numeric, 1) AS vent_pct,
-    SUM(icu_72h) AS icu_count,
-    ROUND((100.0 * SUM(icu_72h) / NULLIF(COUNT(*),0))::numeric, 1) AS icu_pct,
-    SUM(death_in_hospital) AS deaths_in_hosp,
-    ROUND((100.0 * SUM(death_in_hospital) / NULLIF(COUNT(*),0))::numeric, 1) AS mortality_pct,
-    SUM(death_30d) AS deaths_30d,
-    ROUND((100.0 * SUM(death_30d) / NULLIF(COUNT(*),0))::numeric, 1) AS mortality_30d_pct
-FROM :results_schema.cdc_ase_cohort_final;
+-- summary view matching your original output
+DROP VIEW IF EXISTS omop_cdm.ase_cohort_summary CASCADE;
+CREATE VIEW omop_cdm.ase_cohort_summary AS
+SELECT
+  'Cohort Summary' AS metric,
+  COUNT(*) AS total_episodes,
+  COUNT(DISTINCT person_id) AS unique_patients,
+  AVG(vasopressor_flag) AS vasopressor_pct,
+  SUM(vasopressor_flag) AS vasopressor_count,
+  AVG(vent_flag) AS vent_pct,
+  SUM(vent_flag) AS vent_count,
+  AVG(icu_flag) AS icu_pct,
+  SUM(icu_flag) AS icu_count,
+  SUM(death_in_hosp) AS deaths_in_hosp
+FROM omop_cdm.ase_cohort_final;

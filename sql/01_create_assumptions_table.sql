@@ -1,59 +1,37 @@
--- 32-field audit table for full provenance
-DROP TABLE IF EXISTS results_site_a.sofa_assumptions CASCADE;
+-- 01_create_assumptions_table.sql
+-- PURPOSE: Centralize site-specific concept IDs
+-- ADDITIONS: Pre-populate with common OMOP concepts, but YOU MUST edit for your site
 
-CREATE TABLE results_site_a.sofa_assumptions (
-    person_id BIGINT,
-    visit_occurrence_id BIGINT,
-    charttime TIMESTAMP,
-    -- SOFA components
-    resp_sofa INTEGER,
-    cardio_sofa INTEGER,
-    neuro_sofa INTEGER,
-    renal_sofa INTEGER,
-    hepatic_sofa INTEGER,
-    coag_sofa INTEGER,
-    total_sofa INTEGER,
-    -- Respiratory details
-    pf_ratio NUMERIC,
-    pao2_value NUMERIC,
-    fio2_value NUMERIC,
-    spo2_value NUMERIC,
-    fio2_imputed BOOLEAN DEFAULT FALSE,
-    fio2_delta_minutes INTEGER,
-    ventilation_status BOOLEAN,
-    -- Cardiovascular details
-    map_value NUMERIC,
-    sbp_value NUMERIC,
-    dbp_value NUMERIC,
-    nee_total NUMERIC,
-    vasopressin_dose NUMERIC,
-    dopamine_dose NUMERIC,
-    vasopressin_included BOOLEAN DEFAULT TRUE,
-    -- Neurological details
-    gcs_total INTEGER,
-    rass_score INTEGER,
-    gcs_method VARCHAR(50),
-    -- Renal details
-    creatinine_value NUMERIC,
-    urine_output_24h NUMERIC,
-    rrt_active BOOLEAN,
-    -- Hepatic details
-    bilirubin_value NUMERIC,
-    -- Coagulation details
-    platelets_value NUMERIC,
-    -- Lactate
-    lactate_value NUMERIC,
-    death_date DATE,
-    death_type_concept_id INTEGER,
-    died_30d BOOLEAN,
-    died_in_hospital BOOLEAN,
-    mortality_source VARCHAR(20) DEFAULT 'omop_death'  -- not 'discharge',
-    -- Baseline tracking
-    baseline_sofa INTEGER,
-    baseline_method VARCHAR(50),
-    delta_sofa INTEGER,
-    components_scored INTEGER,
-    created_at TIMESTAMP DEFAULT NOW()
+DROP TABLE IF EXISTS omop_sofa.assumptions CASCADE;
+CREATE TABLE omop_sofa.assumptions (
+  domain text NOT NULL,           -- e.g., 'vasopressor','ventilation','icu','blood_culture'
+  concept_id integer NOT NULL,
+  nee_factor numeric,             -- only for vasopressors
+  description text,
+  PRIMARY KEY (domain, concept_id)
 );
 
-CREATE INDEX idx_assumptions_person_time ON results_site_a.sofa_assumptions(person_id, charttime);
+-- Vasopressors (example RxNorm ingredient concepts; add your local codes)
+INSERT INTO omop_sofa.assumptions (domain, concept_id, nee_factor, description) VALUES
+('vasopressor', 1322088, 1.0, 'norepinephrine'),
+('vasopressor', 1343916, 1.0, 'epinephrine'),
+('vasopressor', 1363053, 0.1, 'phenylephrine'), -- example factor
+('vasopressor', 1319998, 0.01, 'dopamine'),
+('vasopressor', 19034224, 0.4, 'vasopressin'); -- add others as needed
+
+-- Ventilation (procedures + devices)
+INSERT INTO omop_sofa.assumptions (domain, concept_id, description) VALUES
+('ventilation', 4049107, 'Endotracheal intubation'),
+('ventilation', 4230167, 'Invasive mechanical ventilation'),
+('ventilation', 45768192, 'Mechanical ventilator - device');
+
+-- ICU locations
+INSERT INTO omop_sofa.assumptions (domain, concept_id, description) VALUES
+('icu', 32037, 'Intensive Care'),
+('icu', 581379, 'ICU'),
+('icu', 32147, 'Coronary Care Unit');
+
+-- Blood cultures (specimen or procedure)
+INSERT INTO omop_sofa.assumptions (domain, concept_id, description) VALUES
+('blood_culture', 4046100, 'Blood culture'),
+('blood_culture', 4153316, 'Blood for culture');

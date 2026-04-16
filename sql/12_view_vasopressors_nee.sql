@@ -1,48 +1,39 @@
--- Vasopressors with NEE calculation (drug_exposure, not measurement)
+-- 12_view_vasopressors_nee.sql
+-- PURPOSE: Build a site-tolerant view of vasopressor infusions with norepinephrine-equivalent (NEE) factors
+-- FIXES vs original:
+--  1) Do NOT drop rows with NULL end_datetime (common for continuous infusions)
+--  2) Allow NULL or multiple IV route concepts
+--  3) Drive concept lists from omop_sofa.assumptions (domain='vasopressor')
+--  4) Keep rows even if weight is missing (NEE calc can be done later)
 
-DROP VIEW IF EXISTS :results_schema.vw_vasopressors_nee CASCADE;
-
-CREATE OR REPLACE VIEW :results_schema.vw_vasopressors_nee AS
-
-SELECT
-  d.person_id,
-  d.drug_exposure_start_datetime AS charttime,
-  d.drug_exposure_end_datetime,
-  d.drug_concept_id,
-  d.quantity,
-  d.dose_unit_source_value,
-  d.route_concept_id,
-  -- Norepinephrine equivalents
-  CASE
-    WHEN d.drug_concept_id IN (4328749, 1321341, 19010309, 35897581, 4021963)
-      THEN COALESCE(d.quantity, 0) * 1.0
-    WHEN d.drug_concept_id IN (1338005, 19076899, 19123434, 35897579, 4022245)
-      THEN COALESCE(d.quantity, 0) * 1.0
-    WHEN d.drug_concept_id IN (1360635, 35202042, 35202043, 45775841, 35897584)
-      THEN COALESCE(d.quantity, 0) * 2.5
-    WHEN d.drug_concept_id IN (1135766, 1335616, 35897582)
-      THEN COALESCE(d.quantity, 0) * 0.1
-    WHEN d.drug_concept_id IN (1319998, 1337860, 40240699, 40240703, 35897578, 4022235)
-      THEN COALESCE(d.quantity, 0) * 0.01
-    WHEN d.drug_concept_id IN (1337720, 19076659)
-      THEN COALESCE(d.quantity, 0) * 0.01
-    ELSE 0
-  END AS nee_dose,
-  CASE WHEN d.drug_concept_id IN (1360635, 35202042, 35202043, 45775841, 35897584)
-    THEN d.quantity ELSE 0 END AS vasopressin_dose,
-  CASE WHEN d.drug_concept_id IN (1319998, 1337860, 40240699, 40240703, 35897578, 4022235)
-    THEN d.quantity ELSE 0 END AS dopamine_dose,
-  CASE WHEN d.drug_concept_id IN (4328749, 1321341, 19010309, 35897581, 4021963)
-    THEN d.quantity ELSE 0 END AS norepi_dose
-FROM :cdm_schema.drug_exposure d
-WHERE d.drug_concept_id IN (
-  4328749, 1321341, 19010309, 35897581, 4021963,
-  1338005, 19076899, 19123434, 35897579, 4022245,
-  1360635, 35202042, 35202043, 45775841, 35897584,
-  1135766, 1335616, 35897582,
-  1319998, 1337860, 40240699, 40240703, 35897578, 4022235,
-  1337720, 19076659
+DROP VIEW IF EXISTS omop_sofa.vasopressors_nee CASCADE;
+CREATE OR REPLACE VIEW omop_sofa.vasopressors_nee AS
+WITH vasopressor_concepts AS (
+  SELECT concept_id, nee_factor, unit_concept_id
+  FROM omop_sofa.assumptions
+  WHERE domain = 'vasopressor'
 )
-AND d.quantity IS NOT NULL;
+SELECT
+  de.person_id,
+  de.visit_occurrence_id,
+  de.visit_detail_id,
+  COALESCE(de.drug_exposure_start_datetime, de.drug_exposure_start_date::timestamp) AS start_datetime,
+  COALESCE(
+    de.drug_exposure_end_datetime,
+    -- if days_supply present, use it; else assume 1 hour minimum infusion
+    CASE WHEN de.days_supply IS NOT NULL THEN de.drug_exposure_start_datetime + (de.days_supply * INTERVAL '1 day')
+         ELSE de.drug_exposure_start_datetime + INTERVAL '1 hour' END,
+    de.drug_exposure_start_datetime + INTERVAL '1 hour'
+  ) AS end_datetime,
+  de.drug_concept_id,
+  vc.nee_factor,
+  de.quantity,
+  de.dose_unit_source_value,
+  de.route_concept_id
+FROM omop_cdm.drug_exposure de
+JOIN vasopressor_concepts vc ON vc.concept_id = de.drug_concept_id
+WHERE (de.route_concept_id IN (4157765, 4112421, 4139962) OR de.route_concept_id IS NULL) -- IV, IV drip, or missing
+  AND de.drug_type_concept_id IN (38000177, 38000178, 32838) -- inpatient administration/EHR
+;
 
-COMMENT ON VIEW :results_schema.vw_vasopressors_nee IS 'Vasopressors with NEE, includes dopamine';
+COMMENT ON VIEW omop_sofa.vasopressors_nee IS 'Site-tolerant vasopressor exposures; NULL end times imputed';
