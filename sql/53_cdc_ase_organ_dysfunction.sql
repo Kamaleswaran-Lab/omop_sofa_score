@@ -38,7 +38,14 @@ SELECT
     WHERE de.person_id = bc.person_id
       AND COALESCE(de.device_exposure_start_datetime, de.device_exposure_start_date::timestamp)
           BETWEEN bc.culture_datetime - INTERVAL '2 days' AND bc.culture_datetime + INTERVAL '2 days'
-      AND de.device_concept_id IN (4049107, 4230167, 45768192) -- ventilator devices
+      AND de.device_concept_id IN (4049107, 4230167, 45768192, 4222965) -- ADDED 4222965
+    UNION ALL
+    -- MUST ADD MEASUREMENT TABLE FOR MGH VENT RESPIRATIONS
+    SELECT 1 FROM :cdm_schema.measurement m
+    WHERE m.person_id = bc.person_id
+      AND COALESCE(m.measurement_datetime, m.measurement_date::timestamp)
+          BETWEEN bc.culture_datetime - INTERVAL '2 days' AND bc.culture_datetime + INTERVAL '2 days'
+      AND m.measurement_concept_id IN (2000000223, 2147483344) 
   ) AS vent_init,
   
   EXISTS (
