@@ -17,7 +17,7 @@ vasopressors AS (
         a.person_id,
         a.visit_occurrence_id,
         1 AS received_vasopressor,
-        MIN(v.charttime) AS first_vasopressor_time
+        MIN(de.drug_exposure_start_datetime) AS first_vasopressor_time
     FROM ase a
     JOIN :cdm_schema.drug_exposure de 
         ON de.person_id = a.person_id
