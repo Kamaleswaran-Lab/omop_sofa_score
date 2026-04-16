@@ -1,4 +1,3 @@
--- Fix: Completely rebuilt to generate the specific column schema that your RUN_ALL_cdc_ase.sql script actually queries against, using MGH Death table hierarchy
 DROP TABLE IF EXISTS :results_schema.cdc_ase_cohort_final CASCADE;
 CREATE TABLE :results_schema.cdc_ase_cohort_final AS
 WITH case_sofa AS (
@@ -35,8 +34,8 @@ SELECT DISTINCT ON (ac.person_id, ac.infection_onset)
   
   -- Organ Support Flags
   CASE WHEN icu.person_id IS NOT NULL THEN 1 ELSE 0 END AS icu_admission,
-  od.vaso_init AS vasopressor_72h,
-  od.vent_init AS ventilation_72h,
+  od.vaso_init::int AS vasopressor_72h, -- Fixed Boolean cast
+  od.vent_init::int AS ventilation_72h, -- Fixed Boolean cast
   GREATEST(CASE WHEN icu.person_id IS NOT NULL THEN 1 ELSE 0 END, od.vaso_init::int, od.vent_init::int) AS organ_support,
   
   -- Outcomes
@@ -47,9 +46,12 @@ SELECT DISTINCT ON (ac.person_id, ac.infection_onset)
 FROM :results_schema.ase_cases ac
 LEFT JOIN :cdm_schema.visit_occurrence vo 
   ON vo.person_id = ac.person_id 
- AND ac.infection_onset BETWEEN vo.visit_start_datetime AND vo.visit_end_datetime
+ -- Fixed open visit NULL trap
+ AND ac.infection_onset BETWEEN vo.visit_start_datetime AND COALESCE(vo.visit_end_datetime, CURRENT_TIMESTAMP)
 LEFT JOIN :vocab_schema.concept c ON c.concept_id = vo.visit_concept_id
 LEFT JOIN case_sofa cs ON cs.person_id = ac.person_id AND cs.infection_onset = ac.infection_onset
 LEFT JOIN :results_schema.ase_organ_dysfunction od ON od.person_id = ac.person_id AND od.culture_datetime = ac.infection_onset
-LEFT JOIN icu_stays icu ON icu.person_id = ac.person_id AND ac.infection_onset BETWEEN icu.visit_detail_start_datetime AND icu.visit_detail_end_datetime
+LEFT JOIN icu_stays icu ON icu.person_id = ac.person_id 
+ -- Fixed open ICU stay NULL trap
+ AND ac.infection_onset BETWEEN icu.visit_detail_start_datetime AND COALESCE(icu.visit_detail_end_datetime, icu.visit_detail_start_datetime + INTERVAL '7 days')
 LEFT JOIN :cdm_schema.death d ON d.person_id = ac.person_id;
