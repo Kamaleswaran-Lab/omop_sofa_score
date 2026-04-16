@@ -1,4 +1,5 @@
--- Create results schema
-CREATE SCHEMA IF NOT EXISTS results_site_a;
+-- 00_create_schemas.sql
+-- Create results schema used by all downstream objects
+-- Run this FIRST with -v results_schema=... -v cdm_schema=...
 
-COMMENT ON SCHEMA results_site_a IS 'SOFA and Sepsis-3 results for Site A';
+CREATE SCHEMA IF NOT EXISTS :results_schema;
