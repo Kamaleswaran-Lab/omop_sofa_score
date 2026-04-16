@@ -1,5 +1,9 @@
--- 56_cdc_ase_cohort_final.sql
---  fixes: vasopressor IDs 1343916/1321341, no quantity filter, intubation proxy for vents
+
+-- Fixes: 
+--  1. Vasopressor concept IDs: 1343916 (epinephrine), 1321341 (norepinephrine)
+--  2. Removed quantity filter (99.7% NULL )
+--  3. Use datetime::date ( start_date columns are NULL)
+--  4. Ventilation: intubation proxy (4202832, 4058031) - no mechanical vent codes in OMOP
 
 DROP TABLE IF EXISTS :results_schema.cdc_ase_cohort_final;
 
@@ -46,9 +50,9 @@ vaso AS (
     FROM ase_base a
     INNER JOIN :cdm_schema.drug_exposure de 
         ON de.person_id = a.person_id
-        AND de.drug_exposure_start_date >= (a.onset_date - INTERVAL '1 day')
-        AND de.drug_exposure_start_date <= (a.onset_date + INTERVAL '2 days')
-    WHERE de.drug_concept_id IN (1343916, 1321341)
+        AND de.drug_exposure_start_datetime::date >= (a.onset_date - 1)
+        AND de.drug_exposure_start_datetime::date <= (a.onset_date + 2)
+    WHERE de.drug_concept_id IN (1343916, 1321341)  -- MGH epinephrine + norepinephrine
 ),
 vent AS (
     SELECT DISTINCT
@@ -58,9 +62,9 @@ vent AS (
     FROM ase_base a
     INNER JOIN :cdm_schema.procedure_occurrence po
         ON po.person_id = a.person_id
-        AND po.procedure_date >= (a.onset_date - INTERVAL '1 day')
-        AND po.procedure_date <= (a.onset_date + INTERVAL '2 days')
-    WHERE po.procedure_concept_id IN (4202832, 4058031)
+        AND po.procedure_datetime::date >= (a.onset_date - 1)
+        AND po.procedure_datetime::date <= (a.onset_date + 2)
+    WHERE po.procedure_concept_id IN (4202832, 4058031)  -- MGH intubation codes (proxy for vent)
 ),
 icu AS (
     SELECT DISTINCT
@@ -70,8 +74,8 @@ icu AS (
     FROM ase_base a
     INNER JOIN :cdm_schema.visit_detail vd
         ON vd.person_id = a.person_id
-        AND vd.visit_detail_start_date >= (a.onset_date - INTERVAL '1 day')
-        AND vd.visit_detail_start_date <= (a.onset_date + INTERVAL '2 days')
+        AND vd.visit_detail_start_datetime::date >= (a.onset_date - 1)
+        AND vd.visit_detail_start_datetime::date <= (a.onset_date + 2)
     WHERE vd.visit_detail_concept_id IN (32037, 581379, 581476, 3265857, 3265858, 3265859)
 ),
 mortality AS (
@@ -81,7 +85,7 @@ mortality AS (
         CASE 
             WHEN d.death_date IS NOT NULL 
                 AND d.death_date >= a.onset_date 
-                AND d.death_date <= (a.onset_date + INTERVAL '30 days')
+                AND d.death_date <= (a.onset_date + 30)
             THEN 1 ELSE 0 
         END AS death_30d,
         CASE 
@@ -142,12 +146,12 @@ LEFT JOIN mortality m
     ON m.person_id = a.person_id 
     AND m.visit_occurrence_id = a.visit_occurrence_id;
 
--- Create indexes
+-- Indexes
 CREATE INDEX idx_ase_final_person ON :results_schema.cdc_ase_cohort_final (person_id);
 CREATE INDEX idx_ase_final_visit ON :results_schema.cdc_ase_cohort_final (visit_occurrence_id);
 CREATE INDEX idx_ase_final_onset ON :results_schema.cdc_ase_cohort_final (onset_date);
 
--- Summary statistics
+-- Summary
 SELECT 
     'Cohort Summary' AS metric,
     COUNT(*) AS total_episodes,
