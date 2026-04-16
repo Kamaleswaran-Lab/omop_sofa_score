@@ -1,9 +1,9 @@
+-- 56_cdc_ase_cohort_final.sql
 
--- Fixes: 
---  1. Vasopressor concept IDs: 1343916 (epinephrine), 1321341 (norepinephrine)
---  2. Removed quantity filter (99.7% NULL )
---  3. Use datetime::date ( start_date columns are NULL)
---  4. Ventilation: intubation proxy (4202832, 4058031) - no mechanical vent codes in OMOP
+-- 1. Vasopressors: concept IDs 1343916 (epinephrine), 1321341 (norepinephrine)
+-- 2. Removed quantity filter (99.7% NULL at )
+-- 3. Ventilation: using intubation codes 4202832, 4058031 as proxy (no mechanical vent codes in OMOP)
+-- 4. Date handling: onset_date::timestamp for interval math (DATE to TIMESTAMP conversion)
 
 DROP TABLE IF EXISTS :results_schema.cdc_ase_cohort_final;
 
@@ -50,9 +50,9 @@ vaso AS (
     FROM ase_base a
     INNER JOIN :cdm_schema.drug_exposure de 
         ON de.person_id = a.person_id
-        AND de.drug_exposure_start_datetime::date >= (a.onset_date - 1)
-        AND de.drug_exposure_start_datetime::date <= (a.onset_date + 2)
-    WHERE de.drug_concept_id IN (1343916, 1321341)  -- MGH epinephrine + norepinephrine
+    WHERE de.drug_concept_id IN (1343916, 1321341)
+      AND de.drug_exposure_start_datetime >= (a.onset_date::timestamp - INTERVAL '1 day')
+      AND de.drug_exposure_start_datetime < (a.onset_date::timestamp + INTERVAL '3 days')
 ),
 vent AS (
     SELECT DISTINCT
@@ -62,9 +62,9 @@ vent AS (
     FROM ase_base a
     INNER JOIN :cdm_schema.procedure_occurrence po
         ON po.person_id = a.person_id
-        AND po.procedure_datetime::date >= (a.onset_date - 1)
-        AND po.procedure_datetime::date <= (a.onset_date + 2)
-    WHERE po.procedure_concept_id IN (4202832, 4058031)  -- MGH intubation codes (proxy for vent)
+    WHERE po.procedure_concept_id IN (4202832, 4058031)
+      AND po.procedure_datetime >= (a.onset_date::timestamp - INTERVAL '1 day')
+      AND po.procedure_datetime < (a.onset_date::timestamp + INTERVAL '3 days')
 ),
 icu AS (
     SELECT DISTINCT
@@ -74,9 +74,9 @@ icu AS (
     FROM ase_base a
     INNER JOIN :cdm_schema.visit_detail vd
         ON vd.person_id = a.person_id
-        AND vd.visit_detail_start_datetime::date >= (a.onset_date - 1)
-        AND vd.visit_detail_start_datetime::date <= (a.onset_date + 2)
     WHERE vd.visit_detail_concept_id IN (32037, 581379, 581476, 3265857, 3265858, 3265859)
+      AND vd.visit_detail_start_datetime >= (a.onset_date::timestamp - INTERVAL '1 day')
+      AND vd.visit_detail_start_datetime < (a.onset_date::timestamp + INTERVAL '3 days')
 ),
 mortality AS (
     SELECT 
@@ -109,6 +109,8 @@ SELECT
     a.od_types,
     a.visit_start_date,
     a.visit_end_date,
+    a.visit_concept_id,
+    a.visit_type,
     a.hospital_day_onset,
     a.onset_type,
     a.year,
@@ -146,17 +148,19 @@ LEFT JOIN mortality m
     ON m.person_id = a.person_id 
     AND m.visit_occurrence_id = a.visit_occurrence_id;
 
--- Indexes
+-- Create indexes for performance
 CREATE INDEX idx_ase_final_person ON :results_schema.cdc_ase_cohort_final (person_id);
 CREATE INDEX idx_ase_final_visit ON :results_schema.cdc_ase_cohort_final (visit_occurrence_id);
 CREATE INDEX idx_ase_final_onset ON :results_schema.cdc_ase_cohort_final (onset_date);
+CREATE INDEX idx_ase_final_year ON :results_schema.cdc_ase_cohort_final (year);
 
--- Summary
+-- Summary statistics
 SELECT 
     'Cohort Summary' AS metric,
     COUNT(*) AS total_episodes,
     COUNT(DISTINCT person_id) AS unique_patients,
     ROUND(AVG(max_sofa_72h)::numeric, 2) AS mean_sofa_72h,
+    ROUND(AVG(delta_sofa_72h)::numeric, 2) AS mean_delta_sofa,
     SUM(vasopressor_72h) AS vasopressor_count,
     ROUND((100.0 * SUM(vasopressor_72h) / NULLIF(COUNT(*),0))::numeric, 1) AS vasopressor_pct,
     SUM(mechanical_vent_72h) AS vent_count,
@@ -164,5 +168,7 @@ SELECT
     SUM(icu_72h) AS icu_count,
     ROUND((100.0 * SUM(icu_72h) / NULLIF(COUNT(*),0))::numeric, 1) AS icu_pct,
     SUM(death_in_hospital) AS deaths_in_hosp,
-    ROUND((100.0 * SUM(death_in_hospital) / NULLIF(COUNT(*),0))::numeric, 1) AS mortality_pct
+    ROUND((100.0 * SUM(death_in_hospital) / NULLIF(COUNT(*),0))::numeric, 1) AS mortality_pct,
+    SUM(death_30d) AS deaths_30d,
+    ROUND((100.0 * SUM(death_30d) / NULLIF(COUNT(*),0))::numeric, 1) AS mortality_30d_pct
 FROM :results_schema.cdc_ase_cohort_final;
