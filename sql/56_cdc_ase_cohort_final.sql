@@ -1,33 +1,24 @@
 -- 56_cdc_ase_cohort_final_MGH.sql
 -- Final CDC ASE cohort with MGH-specific concept IDs
 -- Fixes: vasopressor quantity NULL, non-standard epinephrine ID, intubation proxy for ventilation
+ 
 
 DROP TABLE IF EXISTS :results_schema.cdc_ase_cohort_final;
 CREATE TABLE :results_schema.cdc_ase_cohort_final AS
 WITH ase_base AS (
     SELECT 
-        a.person_id,
-        a.visit_occurrence_id,
-        a.onset_date,
-        a.antibiotic_date,
-        a.culture_date,
-        a.sofa_score,
-        a.sofa_72h_max,
-        a.sofa_72h_mean,
-        s.sofa_respiratory,
-        s.sofa_coagulation,
-        s.sofa_liver,
-        s.sofa_cardiovascular,
-        s.sofa_cns,
-        s.sofa_renal
-    FROM :results_schema.cdc_ase_with_sofa a
-    LEFT JOIN :results_schema.sofa_scores s 
-        ON s.person_id = a.person_id 
-        AND s.visit_occurrence_id = a.visit_occurrence_id
-        AND s.measurement_datetime::date = a.onset_date
+        person_id,
+        visit_occurrence_id,
+        onset_date,
+        antibiotic_date,
+        culture_date,
+        sofa_score,
+        sofa_72h_max,
+        sofa_72h_mean
+    FROM :results_schema.cdc_ase_with_sofa
 ),
 vaso AS (
-    -- MGH FIX: Removed quantity filter (99.7% NULL), use MGH epinephrine ID 1343916
+    -- MGH FIX: Use 1343916 (epi) + 1321341 (norepi), NO quantity filter
     SELECT DISTINCT
         a.person_id,
         a.visit_occurrence_id,
@@ -35,13 +26,12 @@ vaso AS (
     FROM ase_base a
     JOIN :cdm_schema.drug_exposure de 
         ON de.person_id = a.person_id
-        AND de.drug_exposure_start_datetime BETWEEN a.onset_date - interval '1 day' 
-            AND a.onset_date + interval '2 days'
-    WHERE de.drug_concept_id IN (1343916, 1321341)  -- MGH epinephrine + norepinephrine
-        AND de.route_concept_id IN (4112421, 0)  -- IV or NULL (MGH missing routes)
+        AND de.drug_exposure_start_datetime >= a.onset_date - interval '1 day'
+        AND de.drug_exposure_start_datetime <= a.onset_date + interval '2 days'
+    WHERE de.drug_concept_id IN (1343916, 1321341)
 ),
 vent AS (
-    -- MGH FIX: Use intubation as proxy (no mechanical ventilation codes in OMOP)
+    -- MGH FIX: Use intubation codes (no mechanical vent codes exist)
     SELECT DISTINCT
         a.person_id,
         a.visit_occurrence_id,
@@ -49,9 +39,9 @@ vent AS (
     FROM ase_base a
     JOIN :cdm_schema.procedure_occurrence po
         ON po.person_id = a.person_id
-        AND po.procedure_datetime BETWEEN a.onset_date - interval '1 day'
-            AND a.onset_date + interval '2 days'
-    WHERE po.procedure_concept_id IN (4202832, 4058031)  -- MGH intubation codes
+        AND po.procedure_datetime >= a.onset_date - interval '1 day'
+        AND po.procedure_datetime <= a.onset_date + interval '2 days'
+    WHERE po.procedure_concept_id IN (4202832, 4058031)
 ),
 icu AS (
     SELECT DISTINCT
@@ -61,12 +51,9 @@ icu AS (
     FROM ase_base a
     JOIN :cdm_schema.visit_detail vd
         ON vd.person_id = a.person_id
-        AND vd.visit_detail_start_datetime BETWEEN a.onset_date - interval '1 day'
-            AND a.onset_date + interval '2 days'
-    WHERE vd.visit_detail_concept_id IN (
-        32037, 581379, 581476, 3265857, 3265858, 3265859,  -- Standard ICU
-        8717, 8971, 8920  -- MGH-specific ICU concepts (verify these)
-    )
+        AND vd.visit_detail_start_datetime >= a.onset_date - interval '1 day'
+        AND vd.visit_detail_start_datetime <= a.onset_date + interval '2 days'
+    WHERE vd.visit_detail_concept_id IN (32037, 581379, 581476, 3265857, 3265858, 3265859)
 ),
 mortality AS (
     SELECT 
@@ -90,12 +77,6 @@ SELECT
     a.sofa_score AS sofa_baseline,
     a.sofa_72h_max,
     a.sofa_72h_mean,
-    a.sofa_respiratory,
-    a.sofa_coagulation,
-    a.sofa_liver,
-    a.sofa_cardiovascular,
-    a.sofa_cns,
-    a.sofa_renal,
     COALESCE(vs.vasopressor_72h, 0) AS vasopressor_72h,
     COALESCE(vt.mechanical_vent_72h, 0) AS mechanical_vent_72h,
     COALESCE(i.icu_72h, 0) AS icu_72h,
@@ -109,7 +90,7 @@ LEFT JOIN vent vt ON vt.person_id = a.person_id AND vt.visit_occurrence_id = a.v
 LEFT JOIN icu i ON i.person_id = a.person_id AND i.visit_occurrence_id = a.visit_occurrence_id
 LEFT JOIN mortality m ON m.person_id = a.person_id AND m.visit_occurrence_id = a.visit_occurrence_id;
 
--- Summary statistics
+-- Summary
 SELECT 
     'Cohort Summary' AS metric,
     COUNT(*) AS total_episodes,
