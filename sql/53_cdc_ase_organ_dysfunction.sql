@@ -40,7 +40,7 @@ SELECT
           BETWEEN bc.culture_datetime - INTERVAL '2 days' AND bc.culture_datetime + INTERVAL '2 days'
       AND de.device_concept_id IN (4049107, 4230167, 45768192, 4222965) -- ADDED 4222965
     UNION ALL
-    -- MUST ADD MEASUREMENT TABLE FOR MGH VENT RESPIRATIONS
+    -- MUST ADD MEASUREMENT TABLE FOR VENT RESPIRATIONS
     SELECT 1 FROM :cdm_schema.measurement m
     WHERE m.person_id = bc.person_id
       AND COALESCE(m.measurement_datetime, m.measurement_date::timestamp)
