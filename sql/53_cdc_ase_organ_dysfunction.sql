@@ -1,21 +1,21 @@
 -- 53_cdc_ase_organ_dysfunction.sql
---  CHoRUS FIX: direct drug/procedure IDs + COALESCE datetime, no concept_ancestor
--- Includes full   ventilation mapping across procedures, devices, and measurements
+-- CHoRUS FIX v3: MGH-specific, no concept_ancestor, procedures-only ventilation
+-- Vasopressors via drug name, ventilation via intubation codes only, lactate >=2
 
 DROP TABLE IF EXISTS :results_schema.ase_organ_dysfunction CASCADE;
 CREATE TABLE :results_schema.ase_organ_dysfunction AS
 SELECT
   bc.person_id,
   bc.culture_datetime,
-  
-  -- 1. Vasopressors
+
+  -- 1. Vasopressors (±2 days) – name-based to avoid missing MGH mappings
   EXISTS (
-    SELECT 1 FROM :cdm_schema.drug_exposure de
+    SELECT 1
+    FROM :cdm_schema.drug_exposure de
     JOIN :vocab_schema.concept c ON c.concept_id = de.drug_concept_id
     WHERE de.person_id = bc.person_id
       AND COALESCE(de.drug_exposure_start_datetime, de.drug_exposure_start_date::timestamp)
           BETWEEN bc.culture_datetime - INTERVAL '2 days' AND bc.culture_datetime + INTERVAL '2 days'
-      AND c.domain_id = 'Drug'
       AND (
         c.concept_name ILIKE '%norepinephrine%' OR
         c.concept_name ILIKE '%epinephrine%' OR
@@ -28,43 +28,29 @@ SELECT
       AND c.concept_name NOT ILIKE '%topical%'
       AND c.concept_name NOT ILIKE '%inhalation%'
   ) AS vaso_init,
-  
-  -- 2. Ventilation (Procedures, Devices, and Measurements)
+
+  -- 2. Ventilation (±2 days) – INTUBATION ONLY
   EXISTS (
-    -- A. Procedures (Intubations)
-    SELECT 1 FROM :cdm_schema.procedure_occurrence po
+    SELECT 1
+    FROM :cdm_schema.procedure_occurrence po
     WHERE po.person_id = bc.person_id
       AND COALESCE(po.procedure_datetime, po.procedure_date::timestamp)
           BETWEEN bc.culture_datetime - INTERVAL '2 days' AND bc.culture_datetime + INTERVAL '2 days'
-      AND po.procedure_concept_id IN (4202832, 4058031, 4048158, 4061705, 42736715) 
-    
-    UNION ALL
-    
-    -- B. Devices (Ventilators & Oxygen Equipment)
-    SELECT 1 FROM :cdm_schema.device_exposure de
-    WHERE de.person_id = bc.person_id
-      AND COALESCE(de.device_exposure_start_datetime, de.device_exposure_start_date::timestamp)
-          BETWEEN bc.culture_datetime - INTERVAL '2 days' AND bc.culture_datetime + INTERVAL '2 days'
-      AND de.device_concept_id IN (4049107, 4230167, 45768192, 4222965) -- Added MGH 4222965
-      
-    UNION ALL
-    
-    -- C. Measurements (Vent Respirations - 5M rows at MGH)
-    SELECT 1 FROM :cdm_schema.measurement m
-    WHERE m.person_id = bc.person_id
-      AND COALESCE(m.measurement_datetime, m.measurement_date::timestamp)
-          BETWEEN bc.culture_datetime - INTERVAL '2 days' AND bc.culture_datetime + INTERVAL '2 days'
-      AND m.measurement_concept_id IN (2000000223, 2147483344) 
+      AND po.procedure_concept_id IN (
+        4202832,  -- Intubation
+        4058031   -- Endotracheal intubation, emergency procedure
+      )
   ) AS vent_init,
-  
-  -- 3. Lactate >= 2.0 (Fixed from Bilirubin)
+
+  -- 3. Lactate >=2.0 (±2 days)
   EXISTS (
-    SELECT 1 FROM :cdm_schema.measurement m
+    SELECT 1
+    FROM :cdm_schema.measurement m
     WHERE m.person_id = bc.person_id
-      AND m.measurement_concept_id IN (3047181, 3014111, 3022250, 3008037) -- TRUE lactate
+      AND m.measurement_concept_id IN (3047181, 3014111, 3022250, 3008037)
       AND m.value_as_number >= 2.0
       AND COALESCE(m.measurement_datetime, m.measurement_date::timestamp)
           BETWEEN bc.culture_datetime - INTERVAL '2 days' AND bc.culture_datetime + INTERVAL '2 days'
   ) AS lactate_high
-  
+
 FROM :results_schema.ase_blood_cultures bc;
