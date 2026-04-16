@@ -36,7 +36,6 @@ vasopressors AS (
         1337720, 19076659
     )
     AND de.drug_exposure_start_datetime BETWEEN a.onset_date - interval '1 day' AND a.onset_date + interval '2 days'
-    AND de.quantity IS NOT NULL
     -- Exclude topical/local (if route info available)
     AND (de.route_concept_id IS NULL OR de.route_concept_id NOT IN (45956875, 4263681)) -- topical, intranasal
     GROUP BY a.person_id, a.visit_occurrence_id
