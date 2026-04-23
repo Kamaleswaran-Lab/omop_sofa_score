@@ -1,4 +1,4 @@
--- MGH/CHoRUS final: uses actual column names (ventilated boolean, nee_dose, no pao2 in labs_core)
+-- MGH/CHoRUS FINAL - matches actual column names
 DROP VIEW IF EXISTS {{results_schema}}.vw_sofa_components CASCADE;
 
 CREATE OR REPLACE VIEW {{results_schema}}.vw_sofa_components AS
@@ -40,19 +40,19 @@ vent AS (
 ),
 neuro AS (
     SELECT person_id, date_trunc('hour', charttime) AS hr,
-           MIN(gcs) AS gcs
+           MIN(gcs_total) AS gcs
     FROM {{results_schema}}.vw_neuro
     GROUP BY 1,2
 ),
 urine AS (
     SELECT person_id, date_trunc('hour', charttime) AS hr,
-           SUM(urine_output) AS urine_output
+           SUM(urine_hourly) AS urine_output
     FROM {{results_schema}}.vw_urine_24h
     GROUP BY 1,2
 ),
 rrt AS (
     SELECT person_id, date_trunc('hour', charttime) AS hr,
-           MAX(rrt_status) AS rrt_status
+           MAX(rrt_active::int) AS rrt_status
     FROM {{results_schema}}.vw_rrt
     GROUP BY 1,2
 )
