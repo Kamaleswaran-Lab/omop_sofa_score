@@ -1,6 +1,7 @@
 -- v4.5 Enhanced infection onset
 -- Implements: 96h culture window, ≥2 distinct abx, or ICU single-abx
 -- Output used by sepsis3_enhanced
+-- FIXED: removed nested window function (Postgres WindowingError)
 DROP VIEW IF EXISTS {{results_schema}}.view_infection_onset_enhanced CASCADE;
 
 CREATE VIEW {{results_schema}}.view_infection_onset_enhanced AS
@@ -20,12 +21,19 @@ abx_courses AS (
         person_id,
         abx_time,
         drug_concept_id,
-        SUM(CASE
-            WHEN LAG(abx_time) OVER (PARTITION BY person_id ORDER BY abx_time) IS NULL
-              OR abx_time - LAG(abx_time) OVER (PARTITION BY person_id ORDER BY abx_time) > INTERVAL '24 hours'
-            THEN 1 ELSE 0 END)
-        OVER (PARTITION BY person_id ORDER BY abx_time) AS course_id
-    FROM abx
+        SUM(new_course) OVER (PARTITION BY person_id ORDER BY abx_time) AS course_id
+    FROM (
+        SELECT
+            person_id,
+            abx_time,
+            drug_concept_id,
+            CASE
+                WHEN LAG(abx_time) OVER (PARTITION BY person_id ORDER BY abx_time) IS NULL
+                  OR abx_time - LAG(abx_time) OVER (PARTITION BY person_id ORDER BY abx_time) > INTERVAL '24 hours'
+                THEN 1 ELSE 0
+            END AS new_course
+        FROM abx
+    ) sub
 ),
 courses AS (
     SELECT
