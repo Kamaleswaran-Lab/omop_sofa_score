@@ -1,7 +1,7 @@
 -- v4.5 Enhanced infection onset
 -- Implements: 96h culture window, ≥2 distinct abx, or ICU single-abx
 -- Output used by sepsis3_enhanced
--- FIXED: removed nested window function (Postgres WindowingError)
+-- FIXED: 1) removed nested window, 2) corrected culture_time columns for MGH OMOP
 DROP VIEW IF EXISTS {{results_schema}}.view_infection_onset_enhanced CASCADE;
 
 CREATE VIEW {{results_schema}}.view_infection_onset_enhanced AS
@@ -13,7 +13,7 @@ WITH abx AS (
     FROM {{cdm_schema}}.drug_exposure de
     JOIN {{vocab_schema}}.concept_ancestor ca
       ON ca.descendant_concept_id = de.drug_concept_id
-    WHERE ca.ancestor_concept_id IN (21602796) -- Antibacterials (adjust per site)
+    WHERE ca.ancestor_concept_id IN (21602796) -- Antibacterials
       AND de.drug_exposure_start_datetime IS NOT NULL
 ),
 abx_courses AS (
@@ -47,13 +47,15 @@ courses AS (
 cultures AS (
     SELECT
         person_id,
-        COALESCE(measurement_datetime, specimen_datetime) AS culture_time
+        COALESCE(measurement_datetime, measurement_date::timestamp) AS culture_time
     FROM {{cdm_schema}}.measurement m
     JOIN {{vocab_schema}}.concept_ancestor ca
       ON ca.descendant_concept_id = m.measurement_concept_id
     WHERE ca.ancestor_concept_id = 40484543 -- Blood culture
     UNION
-    SELECT person_id, specimen_datetime
+    SELECT
+        person_id,
+        COALESCE(specimen_datetime, specimen_date::timestamp) AS culture_time
     FROM {{cdm_schema}}.specimen s
     JOIN {{vocab_schema}}.concept_ancestor ca
       ON ca.descendant_concept_id = s.specimen_concept_id
