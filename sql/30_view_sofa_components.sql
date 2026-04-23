@@ -1,4 +1,4 @@
--- CORRECTED for MGH/CHoRUS: vw_labs_core lacks pao2/fio2, join vw_pao2_fio2_pairs separately
+-- CORRECTED for MGH/CHoRUS: vw_labs_core lacks pao2/fio2; vw_vasopressors_nee lacks epi/dopamine/vaso
 DROP VIEW IF EXISTS {{results_schema}}.vw_sofa_components CASCADE;
 
 CREATE OR REPLACE VIEW {{results_schema}}.vw_sofa_components AS
@@ -27,10 +27,8 @@ vitals AS (
 ),
 vaso AS (
     SELECT person_id, date_trunc('hour', charttime) AS hr,
-           MAX(norepi_dose) AS norepi_dose, 
-           MAX(epi_dose) AS epi_dose,
-           MAX(dopamine_dose) AS dopamine_dose, 
-           MAX(vasopressin_dose) AS vasopressin_dose
+           MAX(norepi_dose) AS norepi_dose,
+           MAX(nee_dose) AS nee_dose
     FROM {{results_schema}}.vw_vasopressors_nee
     GROUP BY 1,2
 ),
@@ -64,7 +62,10 @@ SELECT
     pf.pao2, pf.fio2, pf.pf_ratio,
     lc.bilirubin, lc.creatinine, lc.platelets, lc.lactate,
     v.map, v.sbp, v.dbp,
-    vaso.norepi_dose, vaso.epi_dose, vaso.dopamine_dose, vaso.vasopressin_dose,
+    vaso.norepi_dose, vaso.nee_dose,
+    NULL::numeric AS epi_dose,
+    NULL::numeric AS dopamine_dose,
+    NULL::numeric AS vasopressin_dose,
     vent.ventilation_status,
     neuro.gcs,
     urine.urine_output,
