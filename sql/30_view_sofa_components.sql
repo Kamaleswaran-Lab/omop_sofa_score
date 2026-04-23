@@ -1,4 +1,4 @@
--- CORRECTED for MGH/CHoRUS: vw_labs_core lacks pao2/fio2; vw_vasopressors_nee lacks epi/dopamine/vaso
+-- MGH/CHoRUS final: uses actual column names (ventilated boolean, nee_dose, no pao2 in labs_core)
 DROP VIEW IF EXISTS {{results_schema}}.vw_sofa_components CASCADE;
 
 CREATE OR REPLACE VIEW {{results_schema}}.vw_sofa_components AS
@@ -34,7 +34,7 @@ vaso AS (
 ),
 vent AS (
     SELECT person_id, date_trunc('hour', charttime) AS hr,
-           MAX(ventilation_status) AS ventilation_status
+           MAX(ventilated::int) AS ventilation_status
     FROM {{results_schema}}.vw_ventilation
     GROUP BY 1,2
 ),
