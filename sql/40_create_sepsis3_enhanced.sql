@@ -20,17 +20,19 @@ sofa_with_baseline AS (
         i.infection_onset,
         i.infection_type,
         COALESCE(
-            (SELECT AVG(sh.total_sofa) 
+            (SELECT MAX(sh.sofa_total) 
              FROM {{results_schema}}.sofa_hourly sh
              WHERE sh.person_id = i.person_id
-               AND sh.charttime BETWEEN i.infection_onset - interval '48 hours'
-                                    AND i.infection_onset - interval '6 hours'),
+               AND sh.visit_occurrence_id = i.visit_occurrence_id
+               AND sh.sofa_hour BETWEEN i.infection_onset - interval '48 hours'
+                                    AND i.infection_onset - interval '1 hour'),
             0
         ) AS baseline_sofa,
-        (SELECT MAX(sh.total_sofa)
+        (SELECT MAX(sh.sofa_total)
          FROM {{results_schema}}.sofa_hourly sh
          WHERE sh.person_id = i.person_id
-           AND sh.charttime BETWEEN i.infection_onset - interval '6 hours'
+           AND sh.visit_occurrence_id = i.visit_occurrence_id
+           AND sh.sofa_hour BETWEEN i.infection_onset - interval '6 hours'
                                 AND i.infection_onset + interval '24 hours')
         AS peak_sofa
     FROM infection_events i
@@ -44,7 +46,7 @@ SELECT DISTINCT ON (person_id, visit_occurrence_id)
     peak_sofa,
     (peak_sofa - baseline_sofa) AS delta_sofa,
     CASE 
-        WHEN (peak_sofa - baseline_sofa) >= 2 AND baseline_sofa > 0 THEN TRUE 
+        WHEN (peak_sofa - baseline_sofa) >= 2 THEN TRUE 
         ELSE FALSE 
     END AS meets_sepsis3
 FROM sofa_with_baseline
