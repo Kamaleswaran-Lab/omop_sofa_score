@@ -40,7 +40,7 @@ s AS (
     FROM results_site_a.sepsis3_enhanced
     WHERE meets_sepsis3 
       AND delta_sofa >= 2 
-      AND baseline_sofa > 0
+      AND baseline_sofa >= 0
 ),
 -- CDC ASE cohort
 a AS (
