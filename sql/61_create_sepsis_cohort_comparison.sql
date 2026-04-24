@@ -1,7 +1,6 @@
 -- 61_create_sepsis_cohort_comparison.sql
 -- Compares Sepsis-3 vs CDC ASE cohorts
 -- MGH fix: joins on person_id + temporal proximity (not visit_occurrence_id)
--- because sepsis3_enhanced and cdc_ase_cohort_final use different visit IDs
 
 DROP TABLE IF EXISTS @results_schema.sepsis_cohort_comparison CASCADE;
 
@@ -36,7 +35,6 @@ ase AS (
         hospital_los_days
     FROM @results_schema.cdc_ase_cohort_final
 ),
--- Match by person and closest onset within 72 hours
 best_matches AS (
     SELECT DISTINCT ON (s.person_id, s.sepsis3_onset)
         s.person_id,
@@ -60,10 +58,9 @@ best_matches AS (
     FROM sepsis3 s
     JOIN ase a 
       ON s.person_id = a.person_id
-     AND ABS(EXTRACT(EPOCH FROM (s.sepsis3_onset - a.ase_onset))) <= 259200  -- 72 hours
+     AND ABS(EXTRACT(EPOCH FROM (s.sepsis3_onset - a.ase_onset))) <= 259200
     ORDER BY s.person_id, s.sepsis3_onset, ABS(EXTRACT(EPOCH FROM (s.sepsis3_onset - a.ase_onset)))
 )
--- Combine all three groups
 SELECT 
     person_id,
     sepsis3_visit_id,
@@ -88,7 +85,6 @@ FROM best_matches
 
 UNION ALL
 
--- Sepsis-3 only (no ASE match within 72h)
 SELECT 
     s.person_id,
     s.visit_occurrence_id AS sepsis3_visit_id,
@@ -118,7 +114,6 @@ WHERE NOT EXISTS (
 
 UNION ALL
 
--- ASE only (no Sepsis-3 match within 72h)
 SELECT 
     a.person_id,
     NULL AS sepsis3_visit_id,
@@ -146,7 +141,6 @@ WHERE NOT EXISTS (
       AND b.ase_onset = a.ase_onset
 );
 
--- Indexes
 CREATE INDEX idx_scc_person ON @results_schema.sepsis_cohort_comparison(person_id);
 CREATE INDEX idx_scc_cohort ON @results_schema.sepsis_cohort_comparison(cohort_type);
 CREATE INDEX idx_scc_onset ON @results_schema.sepsis_cohort_comparison(sepsis3_onset);
