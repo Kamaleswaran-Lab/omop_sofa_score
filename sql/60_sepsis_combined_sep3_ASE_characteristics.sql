@@ -1,9 +1,9 @@
 -- 60_sepsis_combined_sep3_ASE_characteristics.sql
--- FIXED: Require baseline_sofa > 0 for valid Sepsis-3
+-- FIXED: Require baseline_sofa > 0
 
-DROP TABLE IF EXISTS results_site_a.sepsis_cohort_comparison CASCADE;
+DROP TABLE IF EXISTS {{results_schema}}.sepsis_cohort_comparison CASCADE;
 
-CREATE TABLE results_site_a.sepsis_cohort_comparison AS
+CREATE TABLE {{results_schema}}.sepsis_cohort_comparison AS
 WITH sepsis3 AS (
     SELECT 
         person_id,
@@ -12,10 +12,10 @@ WITH sepsis3 AS (
         baseline_sofa,
         peak_sofa,
         delta_sofa
-    FROM results_site_a.sepsis3_enhanced
+    FROM {{results_schema}}.sepsis3_enhanced
     WHERE meets_sepsis3 = TRUE
       AND delta_sofa >= 2
-      AND baseline_sofa > 0  -- FIX: exclude zero-baseline artifacts
+      AND baseline_sofa > 0
 ),
 ase AS (
     SELECT 
@@ -23,7 +23,7 @@ ase AS (
         visit_occurrence_id,
         ase_onset_datetime AS ase_onset,
         organ_dysfunction_count
-    FROM results_site_a.cdc_ase_cohort_final
+    FROM {{results_schema}}.cdc_ase_cohort_final
 ),
 combined AS (
     SELECT
@@ -51,7 +51,7 @@ combined AS (
 )
 SELECT * FROM combined;
 
-CREATE INDEX idx_sepsis_comp_person ON results_site_a.sepsis_cohort_comparison(person_id);
-CREATE INDEX idx_sepsis_comp_group ON results_site_a.sepsis_cohort_comparison(cohort_group);
+CREATE INDEX idx_sepsis_comp_person ON {{results_schema}}.sepsis_cohort_comparison(person_id);
+CREATE INDEX idx_sepsis_comp_group ON {{results_schema}}.sepsis_cohort_comparison(cohort_group);
 
-ANALYZE results_site_a.sepsis_cohort_comparison;
+ANALYZE {{results_schema}}.sepsis_cohort_comparison;
