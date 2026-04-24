@@ -20,19 +20,17 @@ sofa_with_baseline AS (
         i.infection_onset,
         i.infection_type,
         COALESCE(
-            (SELECT MAX(sh.sofa_total) 
+            (SELECT MAX(sh.total_sofa) 
              FROM {{results_schema}}.sofa_hourly sh
              WHERE sh.person_id = i.person_id
-               AND sh.visit_occurrence_id = i.visit_occurrence_id
-               AND sh.sofa_hour BETWEEN i.infection_onset - interval '48 hours'
+               AND sh.charttime BETWEEN i.infection_onset - interval '48 hours'
                                     AND i.infection_onset - interval '1 hour'),
             0
         ) AS baseline_sofa,
-        (SELECT MAX(sh.sofa_total)
+        (SELECT MAX(sh.total_sofa)
          FROM {{results_schema}}.sofa_hourly sh
          WHERE sh.person_id = i.person_id
-           AND sh.visit_occurrence_id = i.visit_occurrence_id
-           AND sh.sofa_hour BETWEEN i.infection_onset - interval '6 hours'
+           AND sh.charttime BETWEEN i.infection_onset - interval '6 hours'
                                 AND i.infection_onset + interval '24 hours')
         AS peak_sofa
     FROM infection_events i
