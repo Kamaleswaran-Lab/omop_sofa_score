@@ -1,50 +1,41 @@
--- 21_view_antibiotics.sql — v4.5.1 CORRECTED
--- Uses CDC ASE antimicrobial concepts with VERIFIED route IDs
+-- 21_view_antibiotics_MGH.sql
+DROP VIEW IF EXISTS results_site_a.view_antibiotics CASCADE;
 
-DROP VIEW IF EXISTS @results_schema.view_antibiotics CASCADE;
-
-CREATE OR REPLACE VIEW @results_schema.view_antibiotics AS
+CREATE OR REPLACE VIEW results_site_a.view_antibiotics AS
 SELECT
     de.drug_exposure_id,
     de.person_id,
     de.visit_occurrence_id,
     de.drug_concept_id,
     c.concept_name as drug_name,
-    de.drug_exposure_start_date,
     de.drug_exposure_start_datetime,
-    de.drug_exposure_end_date,
     de.drug_exposure_end_datetime,
     de.route_concept_id,
-    rc.concept_name as route_name,
-    de.quantity,
-    de.days_supply,
-    de.visit_detail_id
-FROM @cdm_schema.drug_exposure de
-INNER JOIN @results_schema.cdc_ase_antimicrobial_concepts cdc
+    rc.concept_name as route_name
+FROM omopcdm.drug_exposure de
+INNER JOIN results_site_a.cdc_ase_antimicrobial_concepts cdc
     ON de.drug_concept_id = cdc.concept_id
-LEFT JOIN @vocab_schema.concept c ON c.concept_id = de.drug_concept_id
-LEFT JOIN @vocab_schema.concept rc ON rc.concept_id = de.route_concept_id
+LEFT JOIN vocabulary.concept c ON c.concept_id = de.drug_concept_id
+LEFT JOIN vocabulary.concept rc ON rc.concept_id = de.route_concept_id
 WHERE
-    -- VERIFIED systemic routes only
-    de.route_concept_id IN (
-        4112421, -- Intravenous (VERIFIED)
-        4139566, -- Intravenous bolus (VERIFIED)
-        4156705, -- Intravenous drip (VERIFIED)
-        4132161, -- Oral (VERIFIED - )
-        4128794 -- Intramuscular (VERIFIED)
-    )
-    OR de.route_concept_id IS NULL -- include null routes (many EHRs)
-    -- Explicitly exclude non-systemic
+    -- Include systemic routes + NULL + enteral tubes
+    (de.route_concept_id IS NULL 
+     OR de.route_concept_id IN (
+        4171047, -- Intravenous
+        4132161, -- Oral
+        4302612, -- Intramuscular
+        4132254, -- Gastrostomy
+        4132711, -- Nasogastric
+        4133177, -- Jejunostomy
+        4303795, -- Orogastric
+        4305834  -- Nasojejunal
+     ))
+    -- Explicitly EXCLUDE non-systemic (from your data)
     AND COALESCE(de.route_concept_id, 0) NOT IN (
-        45956875, -- Topical
-        4263686, -- Ophthalmic
-        4186834, -- Inhalation
-        4186833, -- Nasal
-        4136280, -- Otic
-        4184015, -- Cutaneous
-        4233944 -- Transdermal
+        40549429, -- Ocular (13,478 rows)
+        4023156,  -- Otic
+        4263689,  -- Topical
+        4057765,  -- Vaginal
+        4156707   -- Intrapleural
     )
-    AND de.drug_exposure_start_date < CURRENT_DATE;
-
-COMMENT ON VIEW @results_schema.view_antibiotics IS
-'CDC ASE systemic antibiotics. VERIFIED routes: IV(4112421,4139566,4156705), Oral(4132161), IM(4128794). Excludes topical.';
+    AND de.drug_exposure_start_datetime < CURRENT_DATE;
