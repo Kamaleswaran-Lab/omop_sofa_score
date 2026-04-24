@@ -1,21 +1,34 @@
 -- 23_view_infection_onset_enhanced.sql
--- FIXED: Deduplicate to first infection per hospitalization
+-- FIXED: Use correct OMOP antibiotic and culture concepts for MGH
 
-DROP VIEW IF EXISTS results_site_a.infection_onset_enhanced CASCADE;
+DROP VIEW IF EXISTS {{results_schema}}.infection_onset_enhanced CASCADE;
 
-CREATE OR REPLACE VIEW results_site_a.infection_onset_enhanced AS
+CREATE OR REPLACE VIEW {{results_schema}}.infection_onset_enhanced AS
 WITH antibiotic_starts AS (
     SELECT 
         person_id,
         visit_occurrence_id,
         drug_exposure_start_datetime AS abx_start,
         drug_concept_id
-    FROM omopcdm.drug_exposure
+    FROM {{omop_schema}}.drug_exposure
     WHERE drug_concept_id IN (
+        -- Antibacterial agents (ATC J01) descendants
         SELECT descendant_concept_id 
-        FROM omopcdm.concept_ancestor 
-        WHERE ancestor_concept_id = 21602796  -- Antibiotics
+        FROM {{omop_schema}}.concept_ancestor 
+        WHERE ancestor_concept_id = 21602796
+        UNION
+        -- Fallback: common IV antibiotics if ancestor missing
+        SELECT concept_id FROM {{omop_schema}}.concept 
+        WHERE concept_id IN (
+            19033961, -- Vancomycin
+            1713332,  -- Piperacillin-tazobactam
+            1513849,  -- Cefepime
+            19012507, -- Meropenem
+            1713740,  -- Ceftriaxone
+            19088382  -- Levofloxacin
+        )
     )
+    AND drug_exposure_start_datetime IS NOT NULL
 ),
 culture_starts AS (
     SELECT 
@@ -23,12 +36,23 @@ culture_starts AS (
         visit_occurrence_id,
         measurement_datetime AS culture_time,
         measurement_concept_id
-    FROM omopcdm.measurement
-    WHERE measurement_concept_id IN (
-        SELECT descendant_concept_id 
-        FROM omopcdm.concept_ancestor 
-        WHERE ancestor_concept_id = 40486635  -- Blood culture
+    FROM {{omop_schema}}.measurement
+    WHERE (
+        measurement_concept_id IN (
+            -- Blood culture descendants
+            SELECT descendant_concept_id 
+            FROM {{omop_schema}}.concept_ancestor 
+            WHERE ancestor_concept_id = 40486635
+            UNION
+            -- Common culture concept IDs
+            SELECT 3008805  -- Blood culture
+            UNION SELECT 4106999
+            UNION SELECT 4289589
+        )
+        OR LOWER(measurement_source_value) LIKE '%blood cult%'
+        OR LOWER(measurement_source_value) LIKE '%bcx%'
     )
+    AND measurement_datetime IS NOT NULL
 ),
 infection_candidates AS (
     SELECT 
