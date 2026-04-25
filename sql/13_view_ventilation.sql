@@ -1,22 +1,9 @@
--- 13_view_ventilation.sql
--- FIX: include device_exposure, add end_datetime
-DROP VIEW IF EXISTS :results_schema.ventilation CASCADE;
-CREATE OR REPLACE VIEW :results_schema.ventilation AS
-WITH vent_concepts AS (
-  SELECT concept_id FROM :results_schema.assumptions WHERE domain = 'ventilation'
-)
-SELECT po.person_id, po.visit_occurrence_id,
-       COALESCE(po.procedure_datetime, po.procedure_date::timestamp) AS start_datetime,
-       COALESCE(po.procedure_end_datetime, 
-                COALESCE(po.procedure_datetime, po.procedure_date::timestamp) + INTERVAL '1 day') AS end_datetime,
-       'procedure' AS source
-FROM :cdm_schema.procedure_occurrence po
-JOIN vent_concepts vc ON vc.concept_id = po.procedure_concept_id
+-- Mechanical ventilation from procedures and device_exposure
+CREATE OR REPLACE VIEW :results_schema.view_ventilation AS
+SELECT person_id, procedure_datetime AS start_time
+FROM :cdm_schema.procedure_occurrence
+WHERE procedure_concept_id IN (4065110, 4145896) -- intubation, invasive vent
 UNION ALL
-SELECT de.person_id, de.visit_occurrence_id,
-       COALESCE(de.device_exposure_start_datetime, de.device_exposure_start_date::timestamp) AS start_datetime,
-       COALESCE(de.device_exposure_end_datetime,
-                COALESCE(de.device_exposure_start_datetime, de.device_exposure_start_date::timestamp) + INTERVAL '1 day') AS end_datetime,
-       'device' AS source
-FROM :cdm_schema.device_exposure de
-JOIN vent_concepts vc ON vc.concept_id = de.device_concept_id;
+SELECT person_id, device_exposure_start_datetime
+FROM :cdm_schema.device_exposure
+WHERE device_concept_id = 45768192; -- ventilator

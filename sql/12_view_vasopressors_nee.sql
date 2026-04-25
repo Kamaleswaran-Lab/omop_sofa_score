@@ -1,25 +1,20 @@
--- 12_view_vasopressors_nee.sql
--- FIX: proper end times, IV only, use assumptions table
-DROP VIEW IF EXISTS :results_schema.vasopressors_nee CASCADE;
-CREATE OR REPLACE VIEW :results_schema.vasopressors_nee AS
-WITH vasopressor_concepts AS (
-  SELECT concept_id, nee_factor FROM :results_schema.assumptions WHERE domain = 'vasopressor'
-)
+-- Vasopressors with norepinephrine equivalent
+-- FIX: include vasopressin 0.04 U/min = 1, epinephrine, dopamine
+CREATE OR REPLACE VIEW :results_schema.view_vasopressors_nee AS
 SELECT
   de.person_id,
-  de.visit_occurrence_id,
-  de.visit_detail_id,
-  COALESCE(de.drug_exposure_start_datetime, de.drug_exposure_start_date::timestamp) AS start_datetime,
-  COALESCE(
-    de.drug_exposure_end_datetime,
-    LEAD(COALESCE(de.drug_exposure_start_datetime, de.drug_exposure_start_date::timestamp)) 
-      OVER (PARTITION BY de.person_id, de.drug_concept_id ORDER BY COALESCE(de.drug_exposure_start_datetime, de.drug_exposure_start_date::timestamp)),
-    COALESCE(de.drug_exposure_start_datetime, de.drug_exposure_start_date::timestamp) + INTERVAL '4 hours'
-  ) AS end_datetime,
-  de.drug_concept_id,
-  vc.nee_factor,
-  de.quantity,
-  de.dose_unit_source_value
+  de.drug_exposure_start_datetime,
+  de.drug_exposure_end_datetime,
+  SUM(
+    CASE
+      WHEN ca.ancestor_concept_id = 1321342 THEN de.quantity -- norepi
+      WHEN ca.ancestor_concept_id = 1319998 THEN de.quantity -- epi 1:1
+      WHEN ca.ancestor_concept_id = 1321245 THEN de.quantity / 2 -- dopamine
+      WHEN ca.ancestor_concept_id = 1319999 THEN de.quantity / 0.04 -- vasopressin
+      ELSE 0
+    END
+  ) AS nee_mcg_kg_min
 FROM :cdm_schema.drug_exposure de
-JOIN vasopressor_concepts vc ON vc.concept_id = de.drug_concept_id
-WHERE de.route_concept_id IN (4157765, 4112421, 4139962); -- IV routes only
+JOIN :vocab_schema.concept_ancestor ca ON ca.descendant_concept_id = de.drug_concept_id
+WHERE ca.ancestor_concept_id IN (1321342,1319998,1321245,1319999)
+GROUP BY 1,2,3;
