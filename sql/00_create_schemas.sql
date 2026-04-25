@@ -3,3 +3,4 @@
 -- Run this FIRST with -v results_schema=... -v cdm_schema=...
 
 CREATE SCHEMA IF NOT EXISTS :results_schema;
+GRANT USAGE ON SCHEMA :results_schema TO PUBLIC;

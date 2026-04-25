@@ -1,64 +1,28 @@
--- 23_view_infection_onset_enhanced.sql
--- FIXED: First infection per hospitalization only
+-- Standard infection onset (72h window)
+DROP VIEW IF EXISTS :results_schema.infection_onset CASCADE;
 
-DROP VIEW IF EXISTS {{results_schema}}.infection_onset_enhanced CASCADE;
-
-CREATE OR REPLACE VIEW {{results_schema}}.infection_onset_enhanced AS
-WITH antibiotic_starts AS (
-    SELECT 
-        person_id,
-        visit_occurrence_id,
-        drug_exposure_start_datetime AS abx_start,
-        drug_concept_id
-    FROM {{omop_schema}}.drug_exposure
-    WHERE drug_concept_id IN (
-        SELECT descendant_concept_id 
-        FROM {{omop_schema}}.concept_ancestor 
-        WHERE ancestor_concept_id = 21602796
-    )
+CREATE OR REPLACE VIEW :results_schema.infection_onset AS
+WITH abx AS (
+  SELECT person_id, visit_occurrence_id,
+         COALESCE(drug_exposure_start_datetime, drug_exposure_start_date::timestamp) AS abx_start
+  FROM :cdm_schema.drug_exposure de
+  JOIN :results_schema.assumptions a ON a.domain='antibiotic' AND a.concept_id = de.drug_concept_id
 ),
-culture_starts AS (
-    SELECT 
-        person_id,
-        visit_occurrence_id,
-        measurement_datetime AS culture_time,
-        measurement_concept_id
-    FROM {{omop_schema}}.measurement
-    WHERE measurement_concept_id IN (
-        SELECT descendant_concept_id 
-        FROM {{omop_schema}}.concept_ancestor 
-        WHERE ancestor_concept_id = 40486635
-    )
+cult AS (
+  SELECT person_id, visit_occurrence_id,
+         COALESCE(measurement_datetime, measurement_date::timestamp) AS culture_time
+  FROM :results_schema.vw_cultures
 ),
-infection_candidates AS (
-    SELECT 
-        a.person_id,
-        a.visit_occurrence_id,
-        LEAST(a.abx_start, c.culture_time) AS infection_onset,
-        CASE 
-            WHEN a.abx_start <= c.culture_time THEN 'antibiotic_first'
-            ELSE 'culture_first'
-        END AS infection_type,
-        a.abx_start AS antibiotic_start,
-        c.culture_time AS culture_start
-    FROM antibiotic_starts a
-    JOIN culture_starts c ON a.person_id = c.person_id 
-        AND a.visit_occurrence_id = c.visit_occurrence_id
-        AND ABS(EXTRACT(EPOCH FROM (a.abx_start - c.culture_time))/3600) <= 72
+paired AS (
+  SELECT a.person_id, a.visit_occurrence_id,
+         LEAST(a.abx_start, c.culture_time) AS infection_onset,
+         a.abx_start AS antibiotic_start,
+         c.culture_time AS culture_start
+  FROM abx a
+  JOIN cult c USING (person_id, visit_occurrence_id)
+  WHERE ABS(EXTRACT(EPOCH FROM (a.abx_start - c.culture_time))/3600) <= 72
 )
-SELECT 
-    person_id,
-    visit_occurrence_id,
-    infection_onset,
-    infection_type,
-    antibiotic_start,
-    culture_start
-FROM (
-    SELECT *,
-        ROW_NUMBER() OVER (
-            PARTITION BY person_id, visit_occurrence_id 
-            ORDER BY infection_onset
-        ) AS rn
-    FROM infection_candidates
-) ranked
-WHERE rn = 1;
+SELECT DISTINCT ON (person_id, visit_occurrence_id)
+  person_id, visit_occurrence_id, infection_onset, antibiotic_start, culture_start
+FROM paired
+ORDER BY person_id, visit_occurrence_id, infection_onset;

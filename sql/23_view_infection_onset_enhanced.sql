@@ -1,55 +1,44 @@
--- 23_view_infection_onset_enhanced.sql
--- Site A edit: add culture_site for source breakdown
--- v4.5 enhanced pragmatic infection definition
+-- Enhanced infection onset - v4.5 pragmatic
+DROP VIEW IF EXISTS :results_schema.view_infection_onset_enhanced CASCADE;
 
-DROP VIEW IF EXISTS {{results_schema}}.view_infection_onset_enhanced CASCADE;
-CREATE OR REPLACE VIEW {{results_schema}}.view_infection_onset_enhanced AS
+CREATE OR REPLACE VIEW :results_schema.view_infection_onset_enhanced AS
 WITH abx AS (
-  SELECT person_id, visit_occurrence_id, drug_exposure_start_datetime AS antibiotic_start,
-         drug_concept_id, ROW_NUMBER() OVER (PARTITION BY person_id, visit_occurrence_id ORDER BY drug_exposure_start_datetime) AS rn
-  FROM {{cdm_schema}}.drug_exposure de
-  JOIN {{cdm_schema}}.concept_ancestor ca ON ca.descendant_concept_id = de.drug_concept_id
-  WHERE ca.ancestor_concept_id = 21602796 -- systemic antibiotics
+  SELECT de.person_id, de.visit_occurrence_id,
+         COALESCE(de.drug_exposure_start_datetime, de.drug_exposure_start_date::timestamp) AS antibiotic_start,
+         de.drug_concept_id,
+         vd.visit_detail_concept_id
+  FROM :cdm_schema.drug_exposure de
+  JOIN :results_schema.assumptions a ON a.domain='antibiotic' AND a.concept_id = de.drug_concept_id
+  LEFT JOIN :cdm_schema.visit_detail vd ON vd.visit_detail_id = de.visit_detail_id
+),
+abx_grouped AS (
+  SELECT person_id, visit_occurrence_id, antibiotic_start,
+         COUNT(DISTINCT drug_concept_id) OVER (PARTITION BY person_id, visit_occurrence_id ORDER BY antibiotic_start RANGE BETWEEN INTERVAL '24 hours' PRECEDING AND CURRENT ROW) AS distinct_abx_24h,
+         MAX(CASE WHEN vd_concept IN (SELECT concept_id FROM :results_schema.assumptions WHERE domain='icu') THEN 1 ELSE 0 END) AS icu_abx
+  FROM (SELECT *, visit_detail_concept_id AS vd_concept FROM abx) x
 ),
 cult AS (
-  SELECT m.person_id, m.visit_occurrence_id, m.measurement_datetime AS culture_start,
-         m.specimen_source_concept_id,
-         cs.concept_name AS culture_site,
-         m.measurement_concept_id
-  FROM {{cdm_schema}}.measurement m
-  LEFT JOIN {{vocab_schema}}.concept cs ON cs.concept_id = m.specimen_source_concept_id
-  WHERE m.measurement_concept_id IN (SELECT concept_id FROM {{vocab_schema}}.concept WHERE concept_class_id = 'Microbiology')
+  SELECT person_id, visit_occurrence_id,
+         specimen_datetime AS culture_start
+  FROM :results_schema.vw_cultures
 ),
 paired AS (
-  SELECT
+  SELECT 
     COALESCE(a.person_id, c.person_id) AS person_id,
     COALESCE(a.visit_occurrence_id, c.visit_occurrence_id) AS visit_occurrence_id,
-    LEAST(a.antibiotic_start, c.culture_start) AS infection_onset,
     a.antibiotic_start,
     c.culture_start,
-    c.culture_site,
-    CASE
-      WHEN c.culture_start <= a.antibiotic_start THEN 'culture_first'
-      WHEN a.antibiotic_start < c.culture_start THEN 'antibiotic_first'
-      ELSE 'unknown'
-    END AS infection_type,
-    ABS(EXTRACT(EPOCH FROM (a.antibiotic_start - c.culture_start))/3600.0) AS hrs_diff
-  FROM abx a
-  FULL OUTER JOIN cult c
-    ON a.person_id = c.person_id
-   AND a.visit_occurrence_id = c.visit_occurrence_id
-   AND ABS(EXTRACT(EPOCH FROM (a.antibiotic_start - c.culture_start))/3600) <= 96 -- Site A: 96h window
-  WHERE a.antibiotic_start IS NOT NULL OR c.culture_start IS NOT NULL
+    CASE WHEN a.antibiotic_start IS NOT NULL AND c.culture_start IS NOT NULL 
+           AND ABS(EXTRACT(EPOCH FROM (a.antibiotic_start - c.culture_start))/3600) <= 96 THEN LEAST(a.antibiotic_start, c.culture_start)
+         WHEN a.antibiotic_start IS NOT NULL AND (a.distinct_abx_24h >=2 OR a.icu_abx=1) THEN a.antibiotic_start
+         ELSE NULL END AS infection_onset
+  FROM abx_grouped a
+  FULL OUTER JOIN cult c ON a.person_id=c.person_id AND a.visit_occurrence_id=c.visit_occurrence_id
+    AND ABS(EXTRACT(EPOCH FROM (a.antibiotic_start - c.culture_start))/3600) <= 96
 )
 SELECT DISTINCT ON (person_id, visit_occurrence_id, infection_onset)
-  person_id,
-  visit_occurrence_id,
-  infection_onset,
-  infection_type,
-  antibiotic_start,
-  culture_start,
-  culture_site,
-  hrs_diff
+  person_id, visit_occurrence_id, infection_onset, antibiotic_start, culture_start
 FROM paired
-WHERE infection_onset < CURRENT_DATE -- exclude future test data
-ORDER BY person_id, visit_occurrence_id, infection_onset, hrs_diff;
+WHERE infection_onset IS NOT NULL
+  AND infection_onset < CURRENT_DATE
+ORDER BY person_id, visit_occurrence_id, infection_onset;

@@ -1,6 +1,6 @@
 -- 01_create_assumptions_table.sql
 -- Central table for site-specific concept IDs
--- Uses psql variables :results_schema
+-- Uses psql variables :results_schema, :vocab_schema
 
 DROP TABLE IF EXISTS :results_schema.assumptions CASCADE;
 CREATE TABLE :results_schema.assumptions (
@@ -25,16 +25,24 @@ INSERT INTO :results_schema.assumptions (domain, concept_id, description) VALUES
 ('ventilation', 4230167, 'Invasive mechanical ventilation'),
 ('ventilation', 45768192, 'Mechanical ventilator device');
 
--- ICU locations
+-- ICU locations - expanded for multi-site
 INSERT INTO :results_schema.assumptions (domain, concept_id, description) VALUES
 ('icu', 32037, 'Intensive Care'),
 ('icu', 581379, 'ICU'),
-('icu', 32147, 'CCU');
+('icu', 32147, 'CCU'),
+('icu', 32237, 'SICU'),
+('icu', 32036, 'MICU');
 
 -- Blood cultures
 INSERT INTO :results_schema.assumptions (domain, concept_id, description) VALUES
 ('blood_culture', 4046100, 'Blood culture'),
 ('blood_culture', 4153316, 'Blood for culture');
 
--- Antibiotics: add your local antibiotic concept_ids here
--- INSERT INTO :results_schema.assumptions (domain, concept_id, description) VALUES ('antibiotic', 1746940, 'example');
+-- Antibiotics: populate from standard ancestor (systemic antibacterials)
+INSERT INTO :results_schema.assumptions (domain, concept_id, description)
+SELECT DISTINCT 'antibiotic', ca.descendant_concept_id, c.concept_name
+FROM :vocab_schema.concept_ancestor ca
+JOIN :vocab_schema.concept c ON c.concept_id = ca.descendant_concept_id
+WHERE ca.ancestor_concept_id = 21602796  -- Antibacterials for systemic use
+  AND c.invalid_reason IS NULL
+ON CONFLICT DO NOTHING;
