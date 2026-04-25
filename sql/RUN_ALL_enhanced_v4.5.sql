@@ -47,12 +47,12 @@ cultures AS (
     SELECT person_id, COALESCE(measurement_datetime, specimen_datetime) AS culture_time
     FROM :"cdm_schema".measurement m
     JOIN :"vocab_schema".concept_ancestor ca ON ca.descendant_concept_id = m.measurement_concept_id
-    WHERE ca.ancestor_concept_id = 40484543
+    WHERE ca.ancestor_concept_id = 40486635
     UNION
     SELECT person_id, specimen_datetime
     FROM :"cdm_schema".specimen s
     JOIN :"vocab_schema".concept_ancestor ca ON ca.descendant_concept_id = s.specimen_concept_id
-    WHERE ca.ancestor_concept_id = 40484543
+    WHERE ca.ancestor_concept_id = 40486635
 ),
 icu_stays AS (
     SELECT person_id, visit_detail_start_datetime, visit_detail_end_datetime
