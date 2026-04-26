@@ -1,4 +1,5 @@
 -- FIXED: supports cultures in specimen OR measurement (or both)
+-- Updated 2026-04-25 with all 34 MGH culture concepts validated
 CREATE OR REPLACE VIEW :results_schema.view_cultures AS
 WITH meas_cult AS (
   SELECT 
@@ -10,7 +11,10 @@ WITH meas_cult AS (
     3023368, 3013867, 3026008, 3025099, 3039355,
     40762243, 3003714, 3000494, 3005702, 3025941,
     3011298, 3016727, 3027005, 3016114, 3016914, 3015479,
-    3045330, 40765191, 3037692, 3023419  -- expanded from prior list
+    3045330, 40765191, 3037692, 3023419,  -- previous list
+    3033740, 3010254, 3019902, 3004840, 3017611,  -- new from your second query
+    3023601, 3023207, 3024461, 3015409, 3036000,
+    43533857, 3025468, 3012568, 3005988
   )
 ),
 spec_cult AS (
