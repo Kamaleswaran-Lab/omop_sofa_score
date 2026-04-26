@@ -4,6 +4,7 @@
 \set vocab_schema vocabulary
 
 \ir 00_create_schemas.sql
+\ir 01_create_assumptions_table.sql
 \ir 10_view_labs_core.sql
 \ir 11_view_vitals_core.sql
 \ir 12_view_vasopressors_nee.sql
