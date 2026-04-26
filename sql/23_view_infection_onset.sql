@@ -1,17 +1,18 @@
 -- Standard infection onset (72h window)
-DROP VIEW IF EXISTS :results_schema.infection_onset CASCADE;
+DROP VIEW IF EXISTS results_site_a.view_infection_onset CASCADE;
 
-CREATE OR REPLACE VIEW :results_schema.infection_onset AS
+CREATE OR REPLACE VIEW results_site_a.view_infection_onset AS
 WITH abx AS (
   SELECT person_id, visit_occurrence_id,
          COALESCE(drug_exposure_start_datetime, drug_exposure_start_date::timestamp) AS abx_start
-  FROM :cdm_schema.drug_exposure de
-  JOIN :results_schema.assumptions a ON a.domain='antibiotic' AND a.concept_id = de.drug_concept_id
+  FROM omopcdm.drug_exposure de
+  JOIN results_site_a.assumptions a ON a.domain='antibiotic' AND a.concept_id = de.drug_concept_id
+  WHERE de.route_concept_id = 4112421  -- intravenous
 ),
 cult AS (
   SELECT person_id, visit_occurrence_id,
          COALESCE(measurement_datetime, measurement_date::timestamp) AS culture_time
-  FROM :results_schema.vw_cultures
+  FROM results_site_a.view_cultures
 ),
 paired AS (
   SELECT a.person_id, a.visit_occurrence_id,
