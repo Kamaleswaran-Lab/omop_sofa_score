@@ -1,6 +1,6 @@
 # OMOP SOFA Score v4.5-fixed (Duke Validation – April 2026)
 
-**This is a fully Athena-validated rebuild of the Kamaleswaran Lab OMOP SOFA pipeline.** All concept IDs have been triple-checked against a live OMOP vocabulary (Duke instance). Previous AI-generated hallucinations have been removed.
+**This is a fully Athena-validated rebuild of the sepsis pipeline.** All concept IDs have been checked against Athena.  
 
 ## Critical Fixes Applied
 
@@ -28,7 +28,7 @@
 ### Why ICU filter was removed
 The original pipeline restricted to ICU onset, which truncated pre-ICU antibiotic exposure and post-ICU outcomes. For offline RL and optimal ICU drug management in elderly delirium, complete hospital trajectories are required.
 
-## Usage (Duke Kubernetes)
+## Usage (local)
 ```bash
 psql "host=... dbname=ohdsi" -v cdm_schema=omopcdm -v vocab_schema=vocabulary -v results_schema=results_site_a -f sql/RUN_ALL_enhanced.sql
 ```
