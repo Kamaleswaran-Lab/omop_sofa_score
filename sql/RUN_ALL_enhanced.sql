@@ -1,21 +1,7 @@
-\set ON_ERROR_STOP on
 \ir 00_create_schemas.sql
-\ir 01_create_assumptions_table.sql
-\ir 02_create_indexes.sql
 \ir 10_view_labs_core.sql
 \ir 11_view_vitals_core.sql
-\ir 12_view_vasopressors_nee.sql
-\ir 13_view_ventilation.sql
 \ir 14_view_neuro.sql
 \ir 15_view_urine_24h.sql
-\ir 16_view_rrt.sql
 \ir 20_view_pao2_fio2_pairs.sql
-\ir 21_view_antibiotics.sql
 \ir 22_view_cultures.sql
-\ir 23_view_infection_onset_enhanced.sql
-\ir 30_view_sofa_components.sql
-\ir 31_create_sofa_hourly.sql
-\ir 40_create_sepsis3_enhanced.sql
-\ir 41_create_sepsis3_collapsed_48h.sql
-\ir 42_create_sepsis3_outcomes_30d.sql
-\ir 43_create_sepsis3_summary.sql
