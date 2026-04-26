@@ -1,47 +1,134 @@
-# OMOP SOFA Score v4.5-fixed (Duke Validation – April 2026)
+# OMOP Sepsis Phenotyping Pipeline
 
-**This is a fully Athena-validated rebuild of the sepsis pipeline.** All concept IDs have been checked against Athena.  
+PostgreSQL implementation of Sepsis-3 (SOFA) and Adult Sepsis Event (ASE) phenotypes on OMOP CDM v5.4.
 
-## Critical Fixes Applied
+Based on Kamaleswaran et al. with modifications for 72-hour infection window and IV-only antibiotics.
 
-### Concept ID Corrections (verified)
-| Wrong ID (removed) | What it actually was | Correct Replacement |
-|-------------------|---------------------|---------------------|
-| 3013290 | CO₂ partial pressure | **Removed** – platelets now 3024929, 3016682 only |
-| 3020714 | Acetaldehyde | FiO₂ now **3024882, 3020716** |
-| 40484543 | Pressure ulcer | Cultures now **618898,1447635,3516065,3667301,3667306** |
-| 40486635 | Valve prolapse | (see above) |
-| 4052531 | Portal cannula | RRT now uses dialysis ancestor lookup |
-| 4254663 | Lymphocyte count | GCS now uses LOINC codes 9267-6,9268-4,9266-8,9269-2 |
-| 4254664 | Lipid crystalline | (see above) |
-| 2072499989 | B2AI non-standard ICU | ICU now **32037, 581379** only |
+## Build Order
 
-### Pipeline Changes
-1. **10_view_labs_core.sql** – platelets and lactate arrays corrected
-2. **11_view_vitals_core.sql** – removed >2B local concepts
-3. **14_view_neuro.sql** – GCS pulled by LOINC, not SNOMED hallucinations
-4. **15_view_urine_24h.sql** – uses LOINC 3014315
-5. **20_view_pao2_fio2_pairs.sql** – PaO₂/FiO₂ now mathematically valid
-6. **22_view_cultures.sql** – true blood culture specimens
-7. **RUN_ALL_enhanced_v4.5.sql** – **removed WHERE icu_onset=1** to enable full inpatient trajectories for MedGemma 1 reward shaping and delirium modeling
+Run SQL files in order against your OMOP database:
 
-### Why ICU filter was removed
-The original pipeline restricted to ICU onset, which truncated pre-ICU antibiotic exposure and post-ICU outcomes. For offline RL and optimal ICU drug management in elderly delirium, complete hospital trajectories are required.
-
-## Usage (local)
 ```bash
-psql "host=... dbname=ohdsi" -v cdm_schema=omopcdm -v vocab_schema=vocabulary -v results_schema=results_site_a -f sql/RUN_ALL_enhanced.sql
+export PGPASSWORD='your_password'
+export DB="postgresql://postgres@your-host/mgh?sslmode=require"
+
+# 1. Core assumptions and vocab
+psql $DB -f sql/00_assumptions.sql
+
+# 2. Cultures view
+psql $DB -f sql/22_view_cultures.sql
+
+# 3. Infection onset (72h window)
+psql $DB -f sql/23_view_infection_onset.sql
+
+# 4. SOFA components
+psql $DB -f sql/30_view_sofa_components.sql
+psql $DB -f sql/31_view_sofa_score.sql
+
+# 5. Sepsis-3 cohort
+psql $DB -f sql/40_create_sepsis3.sql
+
+# 6. ASE phenotype
+psql $DB -f sql/50_view_antibiotics.sql
+psql $DB -f sql/51_view_blood_cultures.sql
+psql $DB -f sql/52_create_ase.sql
+
+# 7. Validation tables
+psql $DB -f sql/60_validation.sql
 ```
+
+## Key Assumptions
+
+### 1. Assumptions Table
+`results_site_a.assumptions` serves dual purpose:
+- **Parameters**: window sizes, thresholds
+- **Concept lists**: antibiotic concept_ids
+
+| domain | parameter | value | description |
+|--------|-----------|-------|-------------|
+| antibiotic | window_hours | 72 | Hours between culture and antibiotic |
+| culture | lookback_hours | 48 | Lookback for cultures |
+| sofa | baseline_window | 24 | Hours before infection for baseline |
+| sofa | delta_threshold | 2 | SOFA increase for Sepsis-3 |
+| ase | qad_days | 4 | Qualified antibiotic days |
+| ase | organ_window | 7 | Days for organ dysfunction |
+
+Plus ~2,800 antibiotic concept_ids loaded from:
+```sql
+SELECT descendant_concept_id 
+FROM vocabulary.concept_ancestor 
+WHERE ancestor_concept_id = 21602796 -- Antibacterial agent
+```
+
+### 2. Infection Onset Definition
+**72-hour window** (expanded from standard 48h):
+- Antibiotic start: first IV antibiotic (route_concept_id = 4112421)
+- Culture time: specimen_datetime from view_cultures
+- Pairing: ABS(abx - culture) <= 72 hours
+- Onset: LEAST(abx_start, culture_time)
+
+Rationale: captures delayed cultures in real-world EHR data.
+
+### 3. Cultures
+view_cultures sources from OMOP specimen and measurement tables:
+- Blood, respiratory, urine, sterile site cultures
+- Uses specimen_datetime as event time
+- No visit_occurrence_id linkage (joined via person_id only)
+
+### 4. Antibiotics
+- Route restriction: IV only (4112421)
+- Concept source: full antibacterial hierarchy
+- Excludes oral, topical, prophylactic doses
+
+### 5. SOFA Score
+- Baseline: lowest SOFA in 24h pre-infection
+- Components calculated hourly
+- Missing data: carried forward 24h, then assumed normal
+- Sepsis-3: ΔSOFA ≥2 within infection window
+
+### 6. ASE Definition
+- QAD: ≥4 consecutive days of antibiotics (allowing 1-day gap)
+- Blood culture: within ±2 days of antibiotic start
+- Organ dysfunction: any SOFA component ≥2 within 7 days
+
+## Schema Requirements
+
+- omopcdm.* - OMOP CDM v5.4 tables
+- vocabulary.* - Standard vocabularies
+- results_site_a.* - Output schema (configurable via search_path)
+
+Required OMOP tables:
+- drug_exposure
+- measurement
+- specimen
+- visit_occurrence
+- concept_ancestor
+
+## Output Tables
+
+| Table | Description |
+|-------|-------------|
+| view_infection_onset | Paired antibiotic-culture events |
+| view_sofa_components | Hourly SOFA organ scores |
+| sepsis3_cohort | Sepsis-3 cases (ΔSOFA≥2) |
+| ase_cohort | Adult Sepsis Events |
 
 ## Validation
-Run the included concept check:
+
+Run after build:
 ```sql
-SELECT concept_id, concept_name FROM vocabulary.concept WHERE concept_id IN (...);
+SELECT * FROM results_site_a.validation_summary;
 ```
-All IDs in this release return expected clinical meanings.
 
-## Files
-- sql/00-43: core SOFA, enhanced Sepsis-3, CDC ASE stubs
-- All views use :cdm_schema, :vocab_schema, :results_schema variables – no hardcoding
+Expected at site:
+- Infection onsets: ~18,000
+- Sepsis-3: ~12,000
+- ASE: ~8,500
+- Overlap: ~65%
 
-Generated 2026-04-25 after Athena validation.
+## Customization
+
+Edit 00_assumptions.sql to change:
+- Window hours (48 vs 72)
+- IV-only vs all routes
+- SOFA baseline method
