@@ -1,12 +1,14 @@
--- GCS components
-CREATE OR REPLACE VIEW :results_schema.view_neuro AS
-SELECT
-  m.person_id,
-  m.measurement_datetime,
-  MAX(CASE WHEN c.concept_id = 4254662 THEN m.value_as_number END) AS gcs_eye,
-  MAX(CASE WHEN c.concept_id = 4254663 THEN m.value_as_number END) AS gcs_verbal,
-  MAX(CASE WHEN c.concept_id = 4254664 THEN m.value_as_number END) AS gcs_motor
+-- Neurological assessments
+DROP VIEW IF EXISTS :results_schema.vw_neuro CASCADE;
+
+CREATE OR REPLACE VIEW :results_schema.vw_neuro AS
+SELECT 
+    m.person_id,
+    m.measurement_datetime AS charttime,
+    MAX(CASE WHEN m.measurement_concept_id IN (4093836, 3016335, 3009094, 3008223) 
+        THEN m.value_as_number END) AS gcs_total,
+    MAX(CASE WHEN m.measurement_concept_id = 36684829 
+        THEN m.value_as_number END) AS rass_score
 FROM :cdm_schema.measurement m
-JOIN :vocab_schema.concept c ON c.concept_id = m.measurement_concept_id
-WHERE c.concept_id IN (4254662,4254663,4254664)
-GROUP BY 1,2;
+WHERE m.measurement_concept_id IN (4093836, 3016335, 3009094, 3008223, 36684829)
+GROUP BY m.person_id, m.measurement_datetime;

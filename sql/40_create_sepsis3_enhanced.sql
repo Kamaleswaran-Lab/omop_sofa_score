@@ -1,10 +1,18 @@
-DROP TABLE IF EXISTS :results_schema.sepsis3_enhanced;
+-- Enhanced sepsis-3 - fixed
+DROP TABLE IF EXISTS :results_schema.sepsis3_enhanced CASCADE;
 CREATE TABLE :results_schema.sepsis3_enhanced AS
-WITH onset AS (SELECT * FROM :results_schema.view_infection_onset_enhanced),
-w AS (
-  SELECT o.person_id, o.infection_onset, s.sofa_datetime, s.sofa_total,
-    COALESCE(MIN(s.sofa_total) FILTER (WHERE s.sofa_datetime BETWEEN o.infection_onset - interval '72h' AND o.infection_onset - interval '24h') OVER (PARTITION BY o.person_id,o.infection_onset),0) AS baseline
-  FROM onset o JOIN :results_schema.sofa_hourly s ON s.person_id=o.person_id AND s.sofa_datetime BETWEEN o.infection_onset - interval '72h' AND o.infection_onset + interval '48h'
+WITH io AS (SELECT * FROM :results_schema.view_infection_onset_enhanced),
+baseline AS (
+  SELECT io.person_id, io.visit_occurrence_id, io.infection_onset,
+         COALESCE(MIN(sh.total_sofa) FILTER (WHERE sh.charttime BETWEEN io.infection_onset - INTERVAL '72 hours' AND io.infection_onset - INTERVAL '1 hour'),0) AS baseline_sofa
+  FROM io LEFT JOIN :results_schema.sofa_hourly sh ON sh.person_id=io.person_id AND sh.charttime BETWEEN io.infection_onset - INTERVAL '72 hours' AND io.infection_onset + INTERVAL '1 hour'
+  GROUP BY 1,2,3
+),
+peak AS (
+  SELECT io.person_id, io.visit_occurrence_id, io.infection_onset,
+         MAX(sh.total_sofa) FILTER (WHERE sh.charttime BETWEEN io.infection_onset AND io.infection_onset + INTERVAL '48 hours') AS peak_sofa
+  FROM io JOIN :results_schema.sofa_hourly sh ON sh.person_id=io.person_id AND sh.charttime BETWEEN io.infection_onset AND io.infection_onset + INTERVAL '48 hours'
+  GROUP BY 1,2,3
 )
-SELECT person_id, infection_onset, sofa_datetime AS worst_time, sofa_total, baseline, sofa_total-baseline AS delta_sofa
-FROM w WHERE sofa_total-baseline >=2 AND sofa_datetime BETWEEN infection_onset AND infection_onset + interval '48h';
+SELECT b.*, p.peak_sofa, (p.peak_sofa - b.baseline_sofa) AS delta_sofa, (p.peak_sofa - b.baseline_sofa) >=2 AS meets_sepsis3
+FROM baseline b JOIN peak p USING(person_id, visit_occurrence_id, infection_onset);
