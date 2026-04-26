@@ -1,5 +1,6 @@
 -- GENERALIZED: finds PaO2 and FiO2 by name, works at MGH + other sites
 -- No hardcoded concept IDs
+DROP VIEW IF EXISTS results_site_a.view_pao2_fio2_pairs CASCADE;
 CREATE OR REPLACE VIEW :results_schema.view_pao2_fio2_pairs AS
 WITH pao2_concepts AS (
   SELECT concept_id FROM :vocab_schema.concept
