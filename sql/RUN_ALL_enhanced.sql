@@ -1,7 +1,15 @@
--- RUN_ALL_MGH_FIXED.sql - works with Kamaleswaran-Lab repo as-is
+-- RUN_ALL_MGH_TUNED.sql - Kamaleswaran-Lab repo + Azure performance fix
 \set results_schema results_site_a
 \set cdm_schema omopcdm
 \set vocab_schema vocabulary
+
+-- Global tuning for this session only
+SET work_mem = '4GB';
+SET maintenance_work_mem = '2GB';
+SET max_parallel_workers_per_gather = 0;  -- prevents IPC MessageQueueSend
+SET temp_buffers = '1GB';
+SET synchronous_commit = off;
+SET statement_timeout = 0;
 
 \ir 00_create_schemas.sql
 \ir 01_create_assumptions_table.sql
@@ -29,10 +37,13 @@ DROP VIEW IF EXISTS :results_schema.view_infection_onset CASCADE;
 DROP VIEW IF EXISTS :results_schema.vw_sofa_components CASCADE;
 \ir 30_view_sofa_components.sql
 -- If error about pao2_time, run this manual fix once:
--- sed -i 's/pao2_time/pao2_datetime/g' 30_view_sofa_components.sql
+-- \! sed -i 's/pao2_time/pao2_datetime/g' 30_view_sofa_components.sql
 
+-- TUNED sofa_hourly build (replaces 31_create_sofa_hourly.sql)
 DROP TABLE IF EXISTS :results_schema.sofa_hourly CASCADE;
-\ir 31_create_sofa_hourly.sql
+CREATE UNLOGGED TABLE :results_schema.sofa_hourly AS
+SELECT * FROM :results_schema.vw_sofa_components;
+ALTER TABLE :results_schema.sofa_hourly SET LOGGED;
 
 -- Sepsis-3
 DROP TABLE IF EXISTS :results_schema.sepsis3 CASCADE;
@@ -56,5 +67,13 @@ DROP TABLE IF EXISTS :results_schema.sepsis3_enhanced_collapsed CASCADE;
 DROP TABLE IF EXISTS :results_schema.sepsis_cohort_comparison CASCADE;
 \ir 61_create_sepsis_cohort_comparison.sql
 
+-- Reset session tuning
+RESET work_mem;
+RESET maintenance_work_mem;
+RESET max_parallel_workers_per_gather;
+RESET temp_buffers;
+RESET synchronous_commit;
+
+ANALYZE :results_schema.sofa_hourly;
 ANALYZE :results_schema.cdc_ase_cohort_final;
 ANALYZE :results_schema.sepsis_cohort_comparison;
