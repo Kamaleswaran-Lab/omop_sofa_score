@@ -10,7 +10,7 @@ if [ $# -lt 1 ]; then
   echo " $0 \"postgresql://postgres:PASS@host/mgh?sslmode=require\" [schema_name]"
   echo ""
   echo "Example:"
-  echo " $0 \"postgresql://postgres:%29kwe26b-m9x%5D27SX@psql-chorus-main.postgres.database.azure.com/mgh?sslmode=require\" results_site_a"
+  echo " $0 \"postgresql://postgres:asda@psql-chorus-main.postgres.database.azure.com/mgh?sslmode=require\" results_site_a"
   exit 1
 fi
 
