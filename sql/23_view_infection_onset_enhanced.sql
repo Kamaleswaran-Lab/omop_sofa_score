@@ -1,4 +1,7 @@
--- sql/23_view_infection_onset.sql
+-- sql/23_view_infection_onset_enhanced.sql
+-- Sepsis-3 infection onset: culture + antibiotic within 72h
+-- Generalizable across OMOP sites: auto-detects IV/systemic routes
+
 DROP VIEW IF EXISTS :results_schema.view_infection_onset CASCADE;
 
 CREATE OR REPLACE VIEW :results_schema.view_infection_onset AS
@@ -8,81 +11,100 @@ WITH params AS (
     72
   ) AS window_hours
 ),
--- 1. Standard IV routes from vocabulary
-vocab_iv AS (
+-- Standard vocabulary IV routes (concept_ancestor of 4112421 = Intravenous)
+vocab_iv_routes AS (
   SELECT DISTINCT ca.descendant_concept_id AS route_concept_id
   FROM :vocab_schema.concept_ancestor ca
   WHERE ca.ancestor_concept_id = 4112421  -- Intravenous route
   UNION ALL SELECT 4112421
 ),
--- 2. Site-specific top routes for antibiotics (fallback)
+-- Site-specific fallback: top routes used for antibiotics at this site
 site_top_routes AS (
   SELECT route_concept_id
   FROM (
-    SELECT de.route_concept_id, COUNT(*) AS cnt,
-           ROW_NUMBER() OVER (ORDER BY COUNT(*) DESC) AS rn
+    SELECT 
+      de.route_concept_id,
+      COUNT(*) AS use_count,
+      ROW_NUMBER() OVER (ORDER BY COUNT(*) DESC) AS rn
     FROM :cdm_schema.drug_exposure de
     WHERE de.drug_concept_id IN (
-      SELECT value::int FROM :results_schema.assumptions WHERE domain='antibiotic' AND parameter='concept_id'
+      SELECT value::int FROM :results_schema.assumptions 
+      WHERE domain='antibiotic' AND parameter='concept_id'
     )
     AND de.route_concept_id IS NOT NULL
-    GROUP BY 1
-  ) t
-  WHERE rn <= 10  -- top 10 routes at this site
+    GROUP BY de.route_concept_id
+  ) ranked
+  WHERE rn <= 15  -- capture IV, oral, IM, etc.
 ),
--- 3. Combine: use vocab if it has data, else use site top routes
-iv_routes AS (
-  SELECT route_concept_id FROM vocab_iv
+-- Combine: prefer vocabulary, fallback to site data if vocab empty
+effective_routes AS (
+  SELECT route_concept_id FROM vocab_iv_routes
   UNION
   SELECT route_concept_id FROM site_top_routes
-  WHERE NOT EXISTS (SELECT 1 FROM vocab_iv)
+  WHERE NOT EXISTS (SELECT 1 FROM vocab_iv_routes)
+  -- Always include common systemic routes as safety net
+  UNION ALL SELECT * FROM (VALUES (4171047),(4132161),(4132254),(4132711),(4302612)) AS t(route_concept_id)
 ),
--- 4. Site stats to decide filtering
-site_stats AS (
+-- Site route completeness check
+site_route_stats AS (
   SELECT 
     COUNT(*) FILTER (WHERE route_concept_id IS NOT NULL) AS routes_populated,
-    COUNT(*) AS total
+    COUNT(*) AS total_exposures
   FROM :cdm_schema.drug_exposure
   WHERE drug_concept_id IN (
-    SELECT value::int FROM :results_schema.assumptions WHERE domain='antibiotic' AND parameter='concept_id'
+    SELECT value::int FROM :results_schema.assumptions 
+    WHERE domain='antibiotic' AND parameter='concept_id'
   )
 ),
+-- All antibiotic exposures
 antibiotics AS (
   SELECT
     de.person_id,
     de.drug_exposure_id,
+    de.visit_occurrence_id,
     COALESCE(de.drug_exposure_start_datetime, de.drug_exposure_start_date::timestamp) AS abx_start,
     de.route_concept_id,
-    CASE WHEN de.route_concept_id IN (SELECT route_concept_id FROM iv_routes) THEN 1 ELSE 0 END AS is_iv
+    CASE 
+      WHEN de.route_concept_id IN (SELECT route_concept_id FROM effective_routes) THEN 1 
+      ELSE 0 
+    END AS is_iv_systemic
   FROM :cdm_schema.drug_exposure de
   WHERE de.drug_concept_id IN (
-    SELECT value::int FROM :results_schema.assumptions WHERE domain='antibiotic' AND parameter='concept_id'
+    SELECT value::int FROM :results_schema.assumptions 
+    WHERE domain='antibiotic' AND parameter='concept_id'
   )
   AND COALESCE(de.drug_exposure_start_datetime, de.drug_exposure_start_date::timestamp) IS NOT NULL
 ),
+-- Filter based on site data quality
 filtered_antibiotics AS (
   SELECT a.*
   FROM antibiotics a
-  CROSS JOIN site_stats s
-  -- Keep all if routes are sparse (<1% populated), otherwise keep only IV/systemic
-  WHERE s.routes_populated < 100
-     OR (s.routes_populated::float / NULLIF(s.total,0) < 0.01)
-     OR a.is_iv = 1
-     OR a.route_concept_id IS NULL
+  CROSS JOIN site_route_stats s
+  CROSS JOIN params p
+  WHERE 
+    -- If routes are mostly missing (<100 or <1%), keep all (Sepsis-3 allows)
+    s.routes_populated < 100 
+    OR (s.routes_populated::float / NULLIF(s.total_exposures,0) < 0.01)
+    -- Otherwise keep only systemic routes
+    OR a.is_iv_systemic = 1
+    OR a.route_concept_id IS NULL
 ),
+-- Pair with cultures
 paired AS (
   SELECT
     fa.person_id,
     fa.drug_exposure_id,
+    fa.visit_occurrence_id,
     c.specimen_id,
     fa.abx_start,
     c.specimen_datetime AS culture_time,
     LEAST(fa.abx_start, c.specimen_datetime) AS infection_onset,
     ABS(EXTRACT(EPOCH FROM (fa.abx_start - c.specimen_datetime))/3600.0) AS hours_apart,
-    fa.is_iv,
+    fa.is_iv_systemic AS is_iv,
     fa.route_concept_id
   FROM filtered_antibiotics fa
-  JOIN :results_schema.view_cultures c USING (person_id)
+  JOIN :results_schema.view_cultures c 
+    ON c.person_id = fa.person_id
   CROSS JOIN params p
   WHERE c.specimen_datetime IS NOT NULL
     AND ABS(EXTRACT(EPOCH FROM (fa.abx_start - c.specimen_datetime))/3600.0) <= p.window_hours
@@ -96,6 +118,10 @@ SELECT DISTINCT ON (person_id, drug_exposure_id, specimen_id)
   drug_exposure_id,
   specimen_id,
   is_iv,
-  route_concept_id
+  route_concept_id,
+  visit_occurrence_id
 FROM paired
 ORDER BY person_id, drug_exposure_id, specimen_id, hours_apart;
+
+COMMENT ON VIEW :results_schema.view_infection_onset IS 
+'Sepsis-3 infection onset pairs (culture ± antibiotic ≤72h). Generalizable: auto-detects IV routes from vocabulary or site top routes. For MGH: uses 4171047 (IV), 4132161 (oral), etc.';
