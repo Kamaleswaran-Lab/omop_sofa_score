@@ -35,14 +35,14 @@ DROP VIEW IF EXISTS :results_schema.view_cultures CASCADE;
 DROP VIEW IF EXISTS :results_schema.view_infection_onset CASCADE;
 \ir 23_view_infection_onset_enhanced.sql
 
--- SOFA components
-DROP VIEW IF EXISTS :results_schema.view_sofa_components CASCADE;
+-- SOFA components (note: creates vw_sofa_components, not view_sofa_components)
+DROP VIEW IF EXISTS :results_schema.vw_sofa_components CASCADE;
 \ir 30_view_sofa_components.sql
 
 -- TUNED sofa_hourly build
 DROP TABLE IF EXISTS :results_schema.sofa_hourly CASCADE;
 CREATE UNLOGGED TABLE :results_schema.sofa_hourly AS
-SELECT * FROM :results_schema.view_sofa_components;
+SELECT * FROM :results_schema.vw_sofa_components;
 ALTER TABLE :results_schema.sofa_hourly SET LOGGED;
 CREATE INDEX ON :results_schema.sofa_hourly(person_id, charttime);
 
