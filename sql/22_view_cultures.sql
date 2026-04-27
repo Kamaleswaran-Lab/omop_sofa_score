@@ -1,3 +1,5 @@
+DROP VIEW IF EXISTS :results_schema.view_cultures CASCADE;
+
 CREATE OR REPLACE VIEW :results_schema.view_cultures AS
 WITH meas_cult AS (
   SELECT
