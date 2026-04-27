@@ -1,5 +1,5 @@
 -- sql/40_create_sepsis3_enhanced.sql
--- DEPENDS ON: 23_view_infection_onset_enhanced.sql, 31_create_sofa_hourly.sql
+-- DEPENDS ON: 23_view_infection_onset_enhanced.sql, 31 (sofa_hourly from vw_sofa_components)
 -- PURPOSE: Join infection onset with pre-computed sofa_hourly; no lab/vital recalculation
 
 DROP TABLE IF EXISTS :results_schema.sepsis3_windows CASCADE;
@@ -24,7 +24,7 @@ FROM :results_schema.view_infection_onset io;
 
 CREATE INDEX ON :results_schema.sepsis3_windows(person_id, infection_onset);
 
--- 2) Pull SOFA from existing sofa_hourly (DO NOT recalculate)
+-- 2) Pull SOFA from existing sofa_hourly
 CREATE TABLE :results_schema.sepsis3_enhanced AS
 WITH baseline AS (
   SELECT
@@ -84,7 +84,6 @@ WHERE ws.sofa_max IS NOT NULL;
 CREATE INDEX ON :results_schema.sepsis3_enhanced(person_id, infection_onset);
 
 -- 3) Final Sepsis-3 cohort: first qualifying episode per patient
--- (41_create_sepsis3_collapsed_48h.sql will further collapse if needed)
 CREATE TABLE :results_schema.sepsis3_cohort AS
 SELECT DISTINCT ON (person_id)
   person_id,
@@ -111,7 +110,7 @@ ORDER BY person_id, infection_onset;
 CREATE INDEX ON :results_schema.sepsis3_cohort(person_id);
 CREATE INDEX ON :results_schema.sepsis3_cohort(sepsis_onset);
 
-COMMENT ON TABLE :results_schema.sepsis3_cohort IS 'Sepsis-3 cohort built from view_infection_onset (474k pairs) joined to pre-computed sofa_hourly. No component recalculation.';
+COMMENT ON TABLE :results_schema.sepsis3_cohort IS 'Sepsis-3 cohort built from view_infection_onset (474k pairs) joined to pre-computed sofa_hourly from vw_sofa_components.';
 
 -- Validation
 SELECT 'sepsis3_enhanced' AS tbl, COUNT(*) FROM :results_schema.sepsis3_enhanced
