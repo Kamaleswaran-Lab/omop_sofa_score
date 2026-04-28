@@ -30,18 +30,18 @@ WITH baseline AS (
   SELECT
     w.person_id,
     w.infection_onset,
-    COALESCE(MIN(sh.sofa_total) FILTER (WHERE sh.charttime BETWEEN w.baseline_start AND w.infection_onset), 0) AS sofa_baseline
+    COALESCE(MIN(sh.sofa_total) FILTER (WHERE sh.hr BETWEEN w.baseline_start AND w.infection_onset), 0) AS sofa_baseline
   FROM :results_schema.sepsis3_windows w
   LEFT JOIN :results_schema.sofa_hourly sh
     ON sh.person_id = w.person_id
-   AND sh.charttime BETWEEN w.baseline_start AND w.infection_onset
+   AND sh.hr BETWEEN w.baseline_start AND w.infection_onset
   GROUP BY 1,2
 ),
 worst AS (
   SELECT DISTINCT ON (w.person_id, w.infection_onset)
     w.person_id,
     w.infection_onset,
-    sh.charttime AS sofa_worst_time,
+    sh.hr AS sofa_worst_time,
     sh.sofa_total AS sofa_max,
     sh.sofa_respiration,
     sh.sofa_coagulation,
@@ -52,8 +52,8 @@ worst AS (
   FROM :results_schema.sepsis3_windows w
   JOIN :results_schema.sofa_hourly sh
     ON sh.person_id = w.person_id
-   AND sh.charttime BETWEEN w.window_start AND w.window_end
-  ORDER BY w.person_id, w.infection_onset, sh.sofa_total DESC, sh.charttime ASC
+   AND sh.hr BETWEEN w.window_start AND w.window_end
+  ORDER BY w.person_id, w.infection_onset, sh.sofa_total DESC, sh.hr ASC
 )
 SELECT
   w.person_id,
