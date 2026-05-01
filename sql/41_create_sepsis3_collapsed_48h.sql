@@ -7,8 +7,8 @@ CREATE TABLE :results_schema.sepsis3_enhanced_collapsed AS
 WITH ordered AS (
   SELECT *,
     LAG(infection_onset) OVER (PARTITION BY person_id ORDER BY infection_onset) AS prev_onset
-  FROM :results_schema.sepsis3_enhanced
-  WHERE sofa_delta >= 2
+  -- FIX 2: Query the pre-filtered cohort table, not the massive enhanced table
+  FROM :results_schema.sepsis3_cohort 
 ),
 grouped AS (
   SELECT *,
@@ -27,7 +27,8 @@ SELECT
   MIN(culture_time) AS culture_time,
   MIN(baseline_sofa) AS baseline_sofa,
   MAX(max_sofa) AS max_sofa,
-  MAX(sofa_delta) AS sofa_delta
+  -- FIX 1: Recalculate the true delta for the new collapsed timeframe
+  (MAX(max_sofa) - MIN(baseline_sofa)) AS sofa_delta 
 FROM grouped
 GROUP BY person_id, episode_grp;
 
