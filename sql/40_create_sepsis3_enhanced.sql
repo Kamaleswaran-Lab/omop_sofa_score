@@ -1,30 +1,35 @@
 -- 40_create_sepsis3_enhanced.sql
--- MGH version 2026-04-29
+-- MGH version 2026-05-01
 -- Depends on: 31_create_sofa_hourly.sql (sofa_hourly must exist with map + gcs_total)
--- Changes: unit conversions for bilirubin (/17.1) and creatinine (/88.4), clean syntax
+-- Changes: unit conversions for bilirubin (/17.1) and creatinine (/88.4), optimized for 425M rows
 
 DROP TABLE IF EXISTS :results_schema.sepsis3_windows CASCADE;
 DROP TABLE IF EXISTS :results_schema.sepsis3_enhanced CASCADE;
 DROP TABLE IF EXISTS :results_schema.sepsis3_cohort CASCADE;
 DROP TABLE IF EXISTS :results_schema.sepsis3 CASCADE;
 
--- 1) Build infection windows
-CREATE TABLE :results_schema.sepsis3_windows AS
+-- Performance settings for large table
+SET work_mem = '8GB';
+SET max_parallel_workers_per_gather = 4;
+SET enable_nestloop = off;
+
+-- 1) Build infection windows (Sepsis-3: baseline -24h, window -48h to +24h)
+CREATE UNLOGGED TABLE :results_schema.sepsis3_windows AS
 SELECT
   io.person_id,
   io.infection_onset,
-  io.infection_onset - INTERVAL '48 hours' AS baseline_start,
+  io.infection_onset - INTERVAL '24 hours' AS baseline_start,
+  io.infection_onset - INTERVAL '48 hours' AS window_start,
   io.infection_onset + INTERVAL '24 hours' AS window_end,
   io.antibiotic_time,
   io.culture_time
 FROM :results_schema.view_infection_onset io;
 
-CREATE INDEX idx_sepsis3_windows_pid_onset 
-  ON :results_schema.sepsis3_windows (person_id, infection_onset);
+CREATE INDEX idx_sepsis3_windows_pid ON :results_schema.sepsis3_windows (person_id);
 ANALYZE :results_schema.sepsis3_windows;
 
--- 2) Score SOFA hourly from sofa_hourly
-CREATE TABLE :results_schema.sepsis3_enhanced AS
+-- 2) Score SOFA and join in ONE pass (no correlated subqueries)
+CREATE UNLOGGED TABLE :results_schema.sepsis3_enhanced AS
 WITH sofa_scored AS (
   SELECT
     sh.person_id,
@@ -53,12 +58,12 @@ WITH sofa_scored AS (
          WHEN sh.bilirubin/17.1 <= 11.9 THEN 3
          ELSE 4 END
     +
-    -- cardiovascular - MAP only (no pressors in hourly table)
+    -- cardiovascular - MAP only
     CASE WHEN sh.map IS NULL THEN 0
          WHEN sh.map >= 70 THEN 0
          ELSE 1 END
     +
-    -- CNS - GCS total from concept 4093836
+    -- CNS
     CASE WHEN sh.gcs_total IS NULL THEN 0
          WHEN sh.gcs_total >= 15 THEN 0
          WHEN sh.gcs_total >= 13 THEN 1
@@ -77,31 +82,41 @@ WITH sofa_scored AS (
          WHEN sh.creatinine/88.4 <= 4.9 THEN 3
          ELSE 4 END AS sofa_total
   FROM :results_schema.sofa_hourly sh
+  WHERE EXISTS (  -- Only scan SOFA for patients with infections
+    SELECT 1 FROM :results_schema.sepsis3_windows w 
+    WHERE w.person_id = sh.person_id
+  )
+),
+joined AS (
+  SELECT
+    w.person_id,
+    w.infection_onset,
+    w.baseline_start,
+    w.window_start,
+    w.window_end,
+    w.antibiotic_time,
+    w.culture_time,
+    s.hr,
+    s.sofa_total
+  FROM :results_schema.sepsis3_windows w
+  JOIN sofa_scored s
+    ON s.person_id = w.person_id
+   AND s.hr BETWEEN w.window_start AND w.window_end
 )
 SELECT
-  w.person_id,
-  w.infection_onset,
-  w.baseline_start,
-  w.window_end,
-  w.antibiotic_time,
-  w.culture_time,
-  COALESCE((
-    SELECT MIN(s.sofa_total)
-    FROM sofa_scored s
-    WHERE s.person_id = w.person_id
-      AND s.hr BETWEEN w.baseline_start AND w.infection_onset - INTERVAL '1 hour'
-  ), 0) AS baseline_sofa,
-  COALESCE((
-    SELECT MAX(s.sofa_total)
-    FROM sofa_scored s
-    WHERE s.person_id = w.person_id
-      AND s.hr BETWEEN w.baseline_start AND w.window_end
-  ), 0) AS max_sofa
-FROM :results_schema.sepsis3_windows w;
+  person_id,
+  infection_onset,
+  baseline_start,
+  window_end,
+  antibiotic_time,
+  culture_time,
+  COALESCE(MIN(sofa_total) FILTER (WHERE hr BETWEEN baseline_start AND infection_onset), 0) AS baseline_sofa,
+  COALESCE(MAX(sofa_total), 0) AS max_sofa,
+  COALESCE(MAX(sofa_total), 0) - COALESCE(MIN(sofa_total) FILTER (WHERE hr BETWEEN baseline_start AND infection_onset), 0) AS sofa_delta
+FROM joined
+GROUP BY person_id, infection_onset, baseline_start, window_end, antibiotic_time, culture_time;
 
-ALTER TABLE :results_schema.sepsis3_enhanced ADD COLUMN sofa_delta integer;
-UPDATE :results_schema.sepsis3_enhanced SET sofa_delta = max_sofa - baseline_sofa;
-
+ALTER TABLE :results_schema.sepsis3_enhanced SET LOGGED;
 CREATE INDEX idx_sepsis3_enhanced_pid_onset 
   ON :results_schema.sepsis3_enhanced (person_id, infection_onset);
 ANALYZE :results_schema.sepsis3_enhanced;
