@@ -22,7 +22,6 @@ SELECT
   person_id,
   MIN(infection_onset) AS infection_onset,
   MIN(baseline_start) AS baseline_start,
-  MIN(window_start) AS window_start,
   MAX(window_end) AS window_end,
   MIN(antibiotic_time) AS antibiotic_time,
   MIN(culture_time) AS culture_time,
