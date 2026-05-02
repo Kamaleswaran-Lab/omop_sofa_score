@@ -59,13 +59,24 @@ SELECT
   antibiotic_time,
   culture_time,
   'culture_antibiotic_pair'::text AS infection_type,
-  COALESCE(MIN(total_sofa) FILTER (WHERE hr BETWEEN baseline_start AND infection_onset), 0) AS baseline_sofa,
-  COALESCE(MAX(total_sofa), 0) AS max_sofa,
-  COALESCE(MAX(total_sofa), 0) AS peak_sofa,
-  COALESCE(MAX(total_sofa), 0) - COALESCE(MIN(total_sofa) FILTER (WHERE hr BETWEEN baseline_start AND infection_onset), 0) AS sofa_delta,
+  
+  -- FIX 3: Baseline extended to onset + 2 hours to catch ED admit labs
+  COALESCE(MIN(total_sofa) FILTER (WHERE hr BETWEEN baseline_start AND infection_onset + INTERVAL '2 hours'), 0) AS baseline_sofa,
+  
+  -- FIX 2: Max SOFA must only be calculated AFTER the infection onset, not looking backwards 48 hours
+  COALESCE(MAX(total_sofa) FILTER (WHERE hr BETWEEN infection_onset AND window_end), 0) AS max_sofa,
+  COALESCE(MAX(total_sofa) FILTER (WHERE hr BETWEEN infection_onset AND window_end), 0) AS peak_sofa,
+  
+  -- Recalculated delta
+  COALESCE(MAX(total_sofa) FILTER (WHERE hr BETWEEN infection_onset AND window_end), 0) - 
+  COALESCE(MIN(total_sofa) FILTER (WHERE hr BETWEEN baseline_start AND infection_onset + INTERVAL '2 hours'), 0) AS sofa_delta,
+  
   COALESCE(MAX(components_observed), 0) AS max_components_observed,
+  
+  -- Recalculated boolean flag
   (
-    COALESCE(MAX(total_sofa), 0) - COALESCE(MIN(total_sofa) FILTER (WHERE hr BETWEEN baseline_start AND infection_onset), 0)
+    COALESCE(MAX(total_sofa) FILTER (WHERE hr BETWEEN infection_onset AND window_end), 0) - 
+    COALESCE(MIN(total_sofa) FILTER (WHERE hr BETWEEN baseline_start AND infection_onset + INTERVAL '2 hours'), 0)
   ) >= 2 AS meets_sepsis3
 FROM time_filtered_sofa
 GROUP BY person_id, visit_occurrence_id, infection_onset, baseline_start, window_start, window_end, antibiotic_time, culture_time;
