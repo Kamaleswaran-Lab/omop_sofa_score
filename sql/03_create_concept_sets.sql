@@ -193,12 +193,47 @@ WHERE
     OR (m.require_standard AND COALESCE(c.standard_concept, '') <> 'S');
 
 -- Portable validation - works in psql, Airflow, dbt, JDBC
-DO $$
+-- ... keep everything up to the validation table exactly as before ...
+
+DROP TABLE IF EXISTS :results_schema.concept_set_validation_failures CASCADE;
+CREATE TABLE :results_schema.concept_set_validation_failures AS
+SELECT
+    m.concept_set_name,
+    m.concept_id,
+    m.source,
+    m.expected_domain_id,
+    m.expected_concept_code,
+    c.concept_code AS actual_concept_code,
+    c.domain_id AS actual_domain_id,
+    c.standard_concept,
+    c.invalid_reason,
+    CASE
+        WHEN c.concept_id IS NULL AND NOT m.local_allowed THEN 'missing_from_vocabulary'
+        WHEN c.invalid_reason IS NOT NULL THEN 'invalid_concept'
+        WHEN m.expected_domain_id IS NOT NULL AND c.domain_id <> m.expected_domain_id THEN 'wrong_domain'
+        WHEN m.expected_concept_code IS NOT NULL AND c.concept_code <> m.expected_concept_code THEN 'wrong_concept_code'
+        WHEN m.require_standard AND COALESCE(c.standard_concept, '') <> 'S' THEN 'non_standard'
+    END AS failure_reason
+FROM :results_schema.concept_set_members m
+LEFT JOIN :vocab_schema.concept c ON c.concept_id = m.concept_id
+WHERE
+    (c.concept_id IS NULL AND NOT m.local_allowed)
+    OR c.invalid_reason IS NOT NULL
+    OR (m.expected_domain_id IS NOT NULL AND c.domain_id <> m.expected_domain_id)
+    OR (m.expected_concept_code IS NOT NULL AND c.concept_code <> m.expected_concept_code)
+    OR (m.require_standard AND COALESCE(c.standard_concept, '') <> 'S');
+
+-- Portable validation block
+DO $do$
+DECLARE
+  v_schema text := :'results_schema';
+  v_count int;
 BEGIN
-  IF (SELECT COUNT(*) FROM :results_schema.concept_set_validation_failures) > 0 THEN
-    RAISE EXCEPTION 'Concept set validation failed: % rows in :results_schema.concept_set_validation_failures. Query table for details.', 
-      (SELECT COUNT(*) FROM :results_schema.concept_set_validation_failures);
+  EXECUTE format('SELECT COUNT(*) FROM %I.concept_set_validation_failures', v_schema) INTO v_count;
+  IF v_count > 0 THEN
+    RAISE EXCEPTION 'Concept set validation failed: % rows in %.concept_set_validation_failures', v_count, v_schema;
   END IF;
-END $$;
+END
+$do$;
 
 CREATE INDEX idx_concept_set_members_name_id ON :results_schema.concept_set_members(concept_set_name, concept_id);
