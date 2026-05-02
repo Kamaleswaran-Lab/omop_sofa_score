@@ -93,7 +93,13 @@ paired AS (
     ON c.person_id = fa.person_id
   CROSS JOIN params p
   WHERE c.specimen_datetime IS NOT NULL
-    AND ABS(EXTRACT(EPOCH FROM (fa.abx_start - c.specimen_datetime))/3600.0) <= p.window_hours
+    AND (
+      -- Culture first, antibiotic within 72h (using the parameter)
+      (c.specimen_datetime <= fa.abx_start AND EXTRACT(EPOCH FROM (fa.abx_start - c.specimen_datetime))/3600.0 <= p.window_hours)
+      OR
+      -- Antibiotic first, culture within 24h (strict Sepsis-3 limit)
+      (fa.abx_start < c.specimen_datetime AND EXTRACT(EPOCH FROM (c.specimen_datetime - fa.abx_start))/3600.0 <= 24)
+    )
 )
 SELECT DISTINCT ON (person_id, drug_exposure_id, specimen_id)
   person_id,
@@ -110,4 +116,4 @@ FROM paired
 ORDER BY person_id, drug_exposure_id, specimen_id, hours_apart;
 
 COMMENT ON VIEW :results_schema.view_infection_onset IS 
-'Sepsis-3 infection onset pairs (culture ± antibiotic ≤72h). Generalizable: auto-detects IV routes from vocabulary or site top routes. For MGH: uses 4171047 (IV), 4132161 (oral), etc.';
+'Sepsis-3 infection onset pairs (Culture first: abx <=72h. Abx first: culture <=24h). Generalizable: auto-detects IV routes.';
