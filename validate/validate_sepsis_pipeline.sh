@@ -10,12 +10,12 @@ if [ $# -lt 1 ]; then
   echo " $0 \"postgresql://postgres:PASS@host/mgh?sslmode=require\" [schema_name]"
   echo ""
   echo "Example:"
-  echo " $0 \"postgresql://postgres:asda@psql-chorus-main.postgres.database.azure.com/mgh?sslmode=require\" results_site_a"
+  echo " $0 \"postgresql://user:PASS@host/omop?sslmode=require\" results"
   exit 1
 fi
 
 CONN="$1"
-SCHEMA="${2:-results_site_a}"
+SCHEMA="${2:-results}"
 OUTFILE="sepsis_validation_$(date +%Y%m%d_%H%M%S).log"
 
 echo "=== CHORUS Sepsis-3 Validation ===" | tee $OUTFILE

@@ -1,7 +1,14 @@
--- FIXED: removed 4052531 (portal cannula), use dialysis ancestor
+-- 16_view_rrt.sql
+-- Renal replacement therapy windows from validated concept sets.
+
 CREATE OR REPLACE VIEW :results_schema.view_rrt AS
-SELECT DISTINCT person_id, procedure_datetime AS start_datetime,
-       procedure_datetime + interval '1 day' AS end_datetime, true AS rrt_active
+SELECT DISTINCT
+  po.person_id,
+  COALESCE(po.procedure_datetime, po.procedure_date::timestamp) AS start_datetime,
+  COALESCE(po.procedure_datetime, po.procedure_date::timestamp) + interval '1 day' AS end_datetime,
+  true AS rrt_active
 FROM :cdm_schema.procedure_occurrence po
-JOIN :vocab_schema.concept_ancestor ca ON ca.descendant_concept_id = po.procedure_concept_id
-WHERE ca.ancestor_concept_id IN (SELECT concept_id FROM :vocab_schema.concept WHERE concept_name ILIKE '%dialysis%' AND domain_id='Procedure' LIMIT 1);
+JOIN :results_schema.concept_set_members cs
+  ON cs.concept_id = po.procedure_concept_id
+ AND cs.concept_set_name = 'rrt'
+WHERE COALESCE(po.procedure_datetime, po.procedure_date::timestamp) IS NOT NULL;

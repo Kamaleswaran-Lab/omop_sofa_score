@@ -1,134 +1,85 @@
 # OMOP Sepsis Phenotyping Pipeline
 
-PostgreSQL implementation of Sepsis-3 (SOFA) and Adult Sepsis Event (ASE) phenotypes on OMOP CDM v5.4.
+PostgreSQL implementation of Sepsis-3 (SOFA) and CDC Adult Sepsis Event (ASE)
+phenotypes for OMOP CDM v5.4.
 
-Based on Kamaleswaran et al. with modifications for 72-hour infection window and IV-only antibiotics.
+The canonical SQL path is `sql/RUN_ALL_enhanced.sql`. Older runners are retained
+only as deprecated compatibility stubs.
 
-## Build Order
-
-Run SQL files in order against your OMOP database:
+## Run Order
 
 ```bash
 export PGPASSWORD='your_password'
-export DB="postgresql://postgres@your-host/mgh?sslmode=require"
+export DB='postgresql://user@host/omop?sslmode=require'
 
-# 1. Core assumptions and vocab
-psql $DB -f sql/00_assumptions.sql
-
-# 2. Cultures view
-psql $DB -f sql/22_view_cultures.sql
-
-# 3. Infection onset (72h window)
-psql $DB -f sql/23_view_infection_onset.sql
-
-# 4. SOFA components
-psql $DB -f sql/30_view_sofa_components.sql
-psql $DB -f sql/31_view_sofa_score.sql
-
-# 5. Sepsis-3 cohort
-psql $DB -f sql/40_create_sepsis3.sql
-
-# 6. ASE phenotype
-psql $DB -f sql/50_view_antibiotics.sql
-psql $DB -f sql/51_view_blood_cultures.sql
-psql $DB -f sql/52_create_ase.sql
-
-# 7. Validation tables
-psql $DB -f sql/60_validation.sql
+psql "$DB" \
+  -v ON_ERROR_STOP=1 \
+  -v results_schema=results \
+  -v cdm_schema=omopcdm \
+  -v vocab_schema=vocabulary \
+  -f sql/RUN_ALL_enhanced.sql
 ```
 
-## Key Assumptions
+The runner builds:
 
-### 1. Assumptions Table
-`results_site_a.assumptions` serves dual purpose:
-- **Parameters**: window sizes, thresholds
-- **Concept lists**: antibiotic concept_ids
+| Object | Purpose |
+| --- | --- |
+| `concept_set_members` | Canonical ATHENA/local concept-set registry |
+| `concept_set_validation_failures` | Fail-fast vocabulary validation output |
+| `view_infection_onset` | Antibiotic/culture candidate infection events |
+| `sofa_hourly` | Event-scoped hourly SOFA component and total scores |
+| `sepsis3_cohort` | Sepsis-3 cases with `sofa_delta >= 2` |
+| `cdc_ase_cohort_final` | CDC ASE cohort with outcomes/support flags |
+| `sepsis_cohort_comparison` | Matched Sepsis-3 vs CDC ASE comparison |
 
-| domain | parameter | value | description |
-|--------|-----------|-------|-------------|
-| antibiotic | window_hours | 72 | Hours between culture and antibiotic |
-| culture | lookback_hours | 48 | Lookback for cultures |
-| sofa | baseline_window | 24 | Hours before infection for baseline |
-| sofa | delta_threshold | 2 | SOFA increase for Sepsis-3 |
-| ase | qad_days | 4 | Qualified antibiotic days |
-| ase | organ_window | 7 | Days for organ dysfunction |
+## Concept And Vocabulary Policy
 
-Plus ~2,800 antibiotic concept_ids loaded from:
+Concepts are managed in `sql/03_create_concept_sets.sql`.
+
+- ATHENA vocabulary concepts are validated for existence, invalid status,
+  expected domain when applicable, and standard concept status.
+- Site-local concept IDs are allowed only when explicitly marked
+  `local_allowed = true`.
+- Antibiotics are expanded from the antibacterial ancestor `21602796` into
+  standard Drug-domain descendants.
+- Vasopressors, ventilation, urine output, renal replacement therapy, PaO2,
+  FiO2, cultures, labs, vitals, and GCS use named concept sets.
+
+If validation fails, inspect:
+
 ```sql
-SELECT descendant_concept_id 
-FROM vocabulary.concept_ancestor 
-WHERE ancestor_concept_id = 21602796 -- Antibacterial agent
+SELECT *
+FROM results.concept_set_validation_failures
+ORDER BY concept_set_name, concept_id;
 ```
 
-### 2. Infection Onset Definition
-**72-hour window** (expanded from standard 48h):
-- Antibiotic start: first IV antibiotic (route_concept_id = 4112421)
-- Culture time: specimen_datetime from view_cultures
-- Pairing: ABS(abx - culture) <= 72 hours
-- Onset: LEAST(abx_start, culture_time)
+## Scale Notes
 
-Rationale: captures delayed cultures in real-world EHR data.
-
-### 3. Cultures
-view_cultures sources from OMOP specimen and measurement tables:
-- Blood, respiratory, urine, sterile site cultures
-- Uses specimen_datetime as event time
-- No visit_occurrence_id linkage (joined via person_id only)
-
-### 4. Antibiotics
-- Route restriction: IV only (4112421)
-- Concept source: full antibacterial hierarchy
-- Excludes oral, topical, prophylactic doses
-
-### 5. SOFA Score
-- Baseline: lowest SOFA in 24h pre-infection
-- Components calculated hourly
-- Missing data: carried forward 24h, then assumed normal
-- Sepsis-3: ΔSOFA ≥2 within infection window
-
-### 6. ASE Definition
-- QAD: ≥4 consecutive days of antibiotics (allowing 1-day gap)
-- Blood culture: within ±2 days of antibiotic start
-- Organ dysfunction: any SOFA component ≥2 within 7 days
-
-## Schema Requirements
-
-- omopcdm.* - OMOP CDM v5.4 tables
-- vocabulary.* - Standard vocabularies
-- results_site_a.* - Output schema (configurable via search_path)
-
-Required OMOP tables:
-- drug_exposure
-- measurement
-- specimen
-- visit_occurrence
-- concept_ancestor
-
-## Output Tables
-
-| Table | Description |
-|-------|-------------|
-| view_infection_onset | Paired antibiotic-culture events |
-| view_sofa_components | Hourly SOFA organ scores |
-| sepsis3_cohort | Sepsis-3 cases (ΔSOFA≥2) |
-| ase_cohort | Adult Sepsis Events |
+- `sofa_hourly` is built from infection-onset windows, not from each patient's
+  full first-to-last measurement span.
+- Hot joins use `(concept_id, person_id, datetime)` and `(person_id, hr)` indexes.
+- `RUN_ALL_enhanced.sql` does not mutate SQL files at runtime.
+- The SOFA table exposes a stable contract: `hr`, component scores,
+  `total_sofa`, and `components_observed`.
 
 ## Validation
 
-Run after build:
-```sql
-SELECT * FROM results_site_a.validation_summary;
+Run static SQL checks before database execution:
+
+```bash
+bash validate/static_sql_checks.sh
 ```
 
-Expected at site:
-- Infection onsets: ~18,000
-- Sepsis-3: ~12,000
-- ASE: ~8,500
-- Overlap: ~65%
+Then run the pipeline with `ON_ERROR_STOP=1` and review final row counts:
 
-## Customization
+```sql
+SELECT 'sepsis3' AS cohort, COUNT(*) FROM results.sepsis3_cohort
+UNION ALL
+SELECT 'cdc_ase', COUNT(*) FROM results.cdc_ase_cohort_final
+UNION ALL
+SELECT cohort_type, COUNT(*) FROM results.sepsis_cohort_comparison GROUP BY cohort_type;
+```
 
-Edit 00_assumptions.sql to change:
-- Window hours (48 vs 72)
-- IV-only vs all routes
-- SOFA baseline method
+For live scale validation, collect `EXPLAIN (ANALYZE, BUFFERS)` on
+`31_create_sofa_hourly.sql`, `40_create_sepsis3_enhanced.sql`, and
+`61_create_sepsis_cohort_comparison.sql` using representative production data.

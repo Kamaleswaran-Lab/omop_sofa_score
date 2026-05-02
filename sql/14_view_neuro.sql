@@ -1,6 +1,5 @@
 -- 14_view_neuro.sql
--- MGH patched: adds GCS total concept 4093836
--- Pulls from both observation and measurement (MGH stores in both)
+-- GCS values from both observation and measurement, normalized hourly.
 
 DROP VIEW IF EXISTS :results_schema.vw_neuro CASCADE;
 
@@ -13,14 +12,11 @@ WITH neuro_raw AS (
     o.observation_concept_id AS concept_id,
     AVG(o.value_as_number) AS val
   FROM :cdm_schema.observation o
-  WHERE o.observation_concept_id IN (
-    4093836,  -- Glasgow coma score (total) - 929k rows
-    3016335,  -- GCS eye
-    3009094,  -- GCS verbal
-    3008223   -- GCS motor
-  )
-  AND o.observation_datetime IS NOT NULL
-  AND o.value_as_number BETWEEN 3 AND 15
+  JOIN :results_schema.concept_set_members cs
+    ON cs.concept_id = o.observation_concept_id
+   AND cs.concept_set_name = 'gcs'
+  WHERE o.observation_datetime IS NOT NULL
+    AND o.value_as_number BETWEEN 3 AND 15
   GROUP BY 1,2,3
 
   UNION ALL
@@ -32,9 +28,11 @@ WITH neuro_raw AS (
     m.measurement_concept_id,
     AVG(m.value_as_number)
   FROM :cdm_schema.measurement m
-  WHERE m.measurement_concept_id IN (4093836,3016335,3009094,3008223)
-  AND m.measurement_datetime IS NOT NULL
-  AND m.value_as_number BETWEEN 3 AND 15
+  JOIN :results_schema.concept_set_members cs
+    ON cs.concept_id = m.measurement_concept_id
+   AND cs.concept_set_name = 'gcs'
+  WHERE m.measurement_datetime IS NOT NULL
+    AND m.value_as_number BETWEEN 3 AND 15
   GROUP BY 1,2,3
 )
 SELECT

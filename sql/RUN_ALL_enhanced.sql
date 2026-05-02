@@ -1,7 +1,20 @@
--- RUN_ALL_enhanced.sql - MGH fixed version
-\set results_schema results_site_a
-\set cdm_schema omopcdm
-\set vocab_schema vocabulary
+-- RUN_ALL_enhanced.sql
+-- Canonical multi-site OMOP SOFA / Sepsis-3 / CDC ASE runner.
+--
+-- Override schemas from psql as needed:
+--   psql ... -v results_schema=results_site_a -v cdm_schema=omopcdm -v vocab_schema=vocabulary -f sql/RUN_ALL_enhanced.sql
+\if :{?results_schema}
+\else
+  \set results_schema results
+\endif
+\if :{?cdm_schema}
+\else
+  \set cdm_schema omopcdm
+\endif
+\if :{?vocab_schema}
+\else
+  \set vocab_schema vocabulary
+\endif
 
 -- Azure tuning
 SET work_mem = '4GB';
@@ -14,6 +27,8 @@ SET statement_timeout = 0;
 -- core views (each \ir on its own line!)
 \ir 00_create_schemas.sql
 \ir 01_create_assumptions_table.sql
+\ir 03_create_concept_sets.sql
+\ir 02_create_indexes.sql
 \ir 10_view_labs_core.sql
 \ir 11_view_vitals_core.sql
 \ir 12_view_vasopressors_nee.sql
@@ -39,15 +54,7 @@ DROP VIEW IF EXISTS :results_schema.view_infection_onset CASCADE;
 DROP VIEW IF EXISTS :results_schema.vw_sofa_components CASCADE;
 \ir 30_view_sofa_components.sql
 
--- sofa_hourly - FIXED index column
-DROP TABLE IF EXISTS :results_schema.sofa_hourly CASCADE;
-CREATE UNLOGGED TABLE :results_schema.sofa_hourly AS
-SELECT * FROM :results_schema.vw_sofa_components;
-ALTER TABLE :results_schema.sofa_hourly SET LOGGED;
-
--- was (person_id, charttime) - WRONG
-CREATE INDEX idx_sofa_hourly_pid_hr ON :results_schema.sofa_hourly(person_id, hr);
-CREATE INDEX idx_sofa_hourly_hr ON :results_schema.sofa_hourly(hr);
+\ir 31_create_sofa_hourly.sql
 
 -- Sepsis-3
 DROP TABLE IF EXISTS :results_schema.sepsis3_windows CASCADE;
@@ -59,8 +66,6 @@ DROP TABLE IF EXISTS :results_schema.sepsis3 CASCADE;
 DROP TABLE IF EXISTS :results_schema.sepsis3_enhanced_collapsed CASCADE;
 \ir 41_create_sepsis3_collapsed_48h.sql
 
--- ASE (fix template vars first)
-\! sed -i 's/{{results_schema}}/:results_schema/g; s/{{cdm_schema}}/:cdm_schema/g; s/{{vocab_schema}}/:vocab_schema/g' 5*.sql
 \ir 50_cdc_ase_parameters.sql
 \ir 51_cdc_ase_blood_cultures.sql
 \ir 52_cdc_ase_qad.sql

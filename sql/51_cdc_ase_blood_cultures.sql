@@ -1,16 +1,19 @@
 -- 51_cdc_ase_blood_cultures.sql
--- Site A edit: use infection_onset_enhanced instead of strict blood culture
+-- CDC ASE presumed infection anchor from the canonical infection-onset view.
 
 DROP TABLE IF EXISTS :results_schema.cdc_ase_cultures CASCADE;
 CREATE TABLE :results_schema.cdc_ase_cultures AS
 SELECT
   person_id,
   visit_occurrence_id,
-  infection_onset AS culture_time,
-  culture_start,
-  antibiotic_start,
-  culture_site
-FROM :results_schema.view_infection_onset_enhanced
-WHERE culture_start IS NOT NULL
-  AND antibiotic_start IS NOT NULL
-  AND ABS(EXTRACT(EPOCH FROM (antibiotic_start - culture_start))/3600) <= 96;
+  culture_time,
+  culture_time AS culture_datetime,
+  culture_time AS culture_start,
+  antibiotic_time AS antibiotic_start,
+  'culture'::text AS culture_site
+FROM :results_schema.view_infection_onset
+WHERE culture_time IS NOT NULL
+  AND antibiotic_time IS NOT NULL
+  AND ABS(EXTRACT(EPOCH FROM (antibiotic_time - culture_time))/3600) <= (
+    SELECT culture_window_hours FROM :results_schema.cdc_ase_parameters
+  );

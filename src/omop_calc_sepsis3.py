@@ -8,6 +8,14 @@ from datetime import timedelta
 class Sepsis3Calculator:
     def __init__(self):
         pass
+
+    @staticmethod
+    def _sofa_time_column(sofa_df):
+        if 'hr' in sofa_df.columns:
+            return 'hr'
+        if 'charttime' in sofa_df.columns:
+            return 'charttime'
+        raise KeyError("SOFA dataframe must include 'hr' or legacy 'charttime'")
     
     def find_suspected_infections(self, antibiotics_df, cultures_df, max_hours_apart=72):
         """Find suspected infections: antibiotics + culture within 72h"""
@@ -35,18 +43,20 @@ class Sepsis3Calculator:
 
     def calculate_sepsis3_enhanced(self, sofa_df, infection_df):
         """v4.5: 96h culture, 48h collapse, ICU onset"""
+        sofa_time_col = self._sofa_time_column(sofa_df)
+
         # Merge SOFA with infections
         merged = infection_df.merge(sofa_df, on='person_id', how='left')
     
         # Calculate baseline (72h pre) and peak (48h post)
         merged['baseline_sofa'] = merged.apply(
-            lambda r: sofa_df[(sofa_df.charttime >= r.baseline_start) &
-                             (sofa_df.charttime <= r.infection_onset)]['total_sofa'].min(), axis=1)
-        merged['peak_sofa'] = merged.apply(
-            lambda r: sofa_df[(sofa_df.charttime >= r.infection_onset) &
-                             (sofa_df.charttime <= r.organ_dysfunction_end)]['total_sofa'].max(), axis=1)
+            lambda r: sofa_df[(sofa_df[sofa_time_col] >= r.baseline_start) &
+                             (sofa_df[sofa_time_col] <= r.infection_onset)]['total_sofa'].min(), axis=1)
+        merged['max_sofa'] = merged.apply(
+            lambda r: sofa_df[(sofa_df[sofa_time_col] >= r.infection_onset) &
+                             (sofa_df[sofa_time_col] <= r.organ_dysfunction_end)]['total_sofa'].max(), axis=1)
     
-        merged['delta_sofa'] = merged['peak_sofa'] - merged['baseline_sofa']
+        merged['delta_sofa'] = merged['max_sofa'] - merged['baseline_sofa']
         sepsis = merged[merged['delta_sofa'] >= 2].copy()
     
         # 48h collapse
@@ -59,6 +69,7 @@ class Sepsis3Calculator:
     
     def calculate_sepsis3(self, infections_df, sofa_scores_df):
         """Calculate Sepsis-3 with pre-infection baseline"""
+        sofa_time_col = self._sofa_time_column(sofa_scores_df)
         sepsis_cases = []
         
         for _, infection in infections_df.iterrows():
@@ -70,8 +81,8 @@ class Sepsis3Calculator:
             
             baseline_sofa = sofa_scores_df[
                 (sofa_scores_df['person_id'] == person_id) &
-                (sofa_scores_df['charttime'] >= baseline_window_start) &
-                (sofa_scores_df['charttime'] <= baseline_window_end)
+                (sofa_scores_df[sofa_time_col] >= baseline_window_start) &
+                (sofa_scores_df[sofa_time_col] <= baseline_window_end)
             ]['total_sofa'].max()
             
             if pd.isna(baseline_sofa):
@@ -82,8 +93,8 @@ class Sepsis3Calculator:
             
             window_max = sofa_scores_df[
                 (sofa_scores_df['person_id'] == person_id) &
-                (sofa_scores_df['charttime'] >= window_start) &
-                (sofa_scores_df['charttime'] <= window_end)
+                (sofa_scores_df[sofa_time_col] >= window_start) &
+                (sofa_scores_df[sofa_time_col] <= window_end)
             ]['total_sofa'].max()
             
             delta = window_max - baseline_sofa if not pd.isna(window_max) else 0
@@ -93,7 +104,7 @@ class Sepsis3Calculator:
                     'person_id': person_id,
                     'infection_onset': infection_time,
                     'baseline_sofa': baseline_sofa,
-                    'peak_sofa': window_max,
+                    'max_sofa': window_max,
                     'delta_sofa': delta,
                     'sepsis_onset': infection_time
                 })

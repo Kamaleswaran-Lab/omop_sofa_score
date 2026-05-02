@@ -9,15 +9,9 @@ WITH meas_cult AS (
     m.measurement_concept_id AS source_concept_id,
     m.visit_occurrence_id
   FROM :cdm_schema.measurement m
-  WHERE m.measurement_concept_id IN (
-    3023368, 3013867, 3026008, 3025099, 3039355,
-    40762243, 3003714, 3000494, 3005702, 3025941,
-    3011298, 3016727, 3027005, 3016114, 3016914, 3015479,
-    3045330, 40765191, 3037692, 3023419,
-    3033740, 3010254, 3019902, 3004840, 3017611,
-    3023601, 3023207, 3024461, 3015409, 3036000,
-    43533857, 3025468, 3012568, 3005988
-  )
+  JOIN :results_schema.concept_set_members cs
+    ON cs.concept_id = m.measurement_concept_id
+   AND cs.concept_set_name = 'culture_measurement'
 ),
 spec_cult AS (
   SELECT
@@ -27,7 +21,9 @@ spec_cult AS (
     s.specimen_concept_id AS source_concept_id,
     NULL::bigint AS visit_occurrence_id   -- your CDM has no column
   FROM :cdm_schema.specimen s
-  WHERE s.specimen_concept_id IN (618898, 1447635, 3516065, 3667301, 3667306)
+  JOIN :results_schema.concept_set_members cs
+    ON cs.concept_id = s.specimen_concept_id
+   AND cs.concept_set_name = 'culture_specimen'
 ),
 proc_cult AS (
   SELECT

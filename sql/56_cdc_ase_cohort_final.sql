@@ -6,10 +6,11 @@ WITH case_sofa AS (
   GROUP BY person_id, infection_onset
 ),
 icu_stays AS (
-  -- Explicit CHoRUS MGH ICU concepts
+  -- Generic OMOP ICU visit detail concept. Override by extending this CTE
+  -- downstream if a site maps ICU locations to local concepts.
   SELECT DISTINCT person_id, visit_occurrence_id, visit_detail_start_datetime, visit_detail_end_datetime
   FROM :cdm_schema.visit_detail
-  WHERE visit_detail_concept_id IN (2072499989,581383,2072500011,2072500012,2072500018,2072500007,2072500031,2072500010,2072500004)
+  WHERE visit_detail_concept_id = 32037
 )
 SELECT DISTINCT ON (ac.person_id, ac.infection_onset)
   ac.person_id,
@@ -20,15 +21,19 @@ SELECT DISTINCT ON (ac.person_id, ac.infection_onset)
   vo.visit_end_datetime AS discharge_time,
   
   -- Onset Type
-  CASE WHEN ac.infection_onset - vo.visit_start_datetime < INTERVAL '48 hours' THEN 'community-onset' ELSE 'hospital-onset' END AS onset_type,
+  CASE
+    WHEN vo.visit_occurrence_id IS NULL THEN 'unknown'
+    WHEN ac.infection_onset - vo.visit_start_datetime < INTERVAL '48 hours' THEN 'community-onset'
+    ELSE 'hospital-onset'
+  END AS onset_type,
   c.concept_name AS visit_type,
   
   -- SOFA Severity
   COALESCE(cs.max_sofa_72h, 0) AS max_sofa_72h,
   CASE 
-      WHEN cs.max_sofa_72h <= 2 THEN 'minimal'
-      WHEN cs.max_sofa_72h <= 5 THEN 'mild'
-      WHEN cs.max_sofa_72h <= 9 THEN 'moderate'
+      WHEN COALESCE(cs.max_sofa_72h, 0) <= 2 THEN 'minimal'
+      WHEN COALESCE(cs.max_sofa_72h, 0) <= 5 THEN 'mild'
+      WHEN COALESCE(cs.max_sofa_72h, 0) <= 9 THEN 'moderate'
       ELSE 'severe' 
   END AS sofa_severity,
   
@@ -54,4 +59,5 @@ LEFT JOIN :results_schema.ase_organ_dysfunction od ON od.person_id = ac.person_i
 LEFT JOIN icu_stays icu ON icu.person_id = ac.person_id 
  -- Fixed open ICU stay NULL trap
  AND ac.infection_onset BETWEEN icu.visit_detail_start_datetime AND COALESCE(icu.visit_detail_end_datetime, icu.visit_detail_start_datetime + INTERVAL '7 days')
-LEFT JOIN :cdm_schema.death d ON d.person_id = ac.person_id;
+LEFT JOIN :cdm_schema.death d ON d.person_id = ac.person_id
+ORDER BY ac.person_id, ac.infection_onset, vo.visit_start_datetime NULLS LAST;

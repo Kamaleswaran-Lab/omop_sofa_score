@@ -6,8 +6,10 @@ WITH abx_days AS (
     de.person_id, 
     COALESCE(de.drug_exposure_start_datetime::date, de.drug_exposure_start_date) AS abx_day
   FROM :cdm_schema.drug_exposure de
-  JOIN :vocab_schema.concept_ancestor ca ON ca.descendant_concept_id = de.drug_concept_id
-  WHERE ca.ancestor_concept_id = 21602796 -- Antibacterials
+  JOIN :results_schema.concept_set_members cs
+    ON cs.concept_id = de.drug_concept_id
+   AND cs.concept_set_name = 'antibiotic'
+  WHERE COALESCE(de.drug_exposure_start_datetime::date, de.drug_exposure_start_date) IS NOT NULL
 ),
 ordered_days AS (
   SELECT *,
@@ -17,7 +19,7 @@ ordered_days AS (
 course_flags AS (
   SELECT *,
     CASE WHEN prev_day IS NULL 
-           OR abx_day - prev_day > (SELECT qad_max_gap_days + 1 FROM :results_schema.ase_parameters)
+           OR abx_day - prev_day > (SELECT qad_max_gap_days + 1 FROM :results_schema.cdc_ase_parameters)
          THEN 1 ELSE 0 END AS is_new_course
   FROM ordered_days
 ),
@@ -29,4 +31,4 @@ course_ids AS (
 SELECT person_id, MIN(abx_day) AS qad_start, MAX(abx_day) AS qad_end, COUNT(*) AS qad_days
 FROM course_ids
 GROUP BY person_id, course_id
-HAVING COUNT(*) >= (SELECT qad_min_days FROM :results_schema.ase_parameters);
+HAVING COUNT(*) >= (SELECT qad_min_days FROM :results_schema.cdc_ase_parameters);

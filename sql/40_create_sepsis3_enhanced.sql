@@ -1,6 +1,5 @@
 -- 40_create_sepsis3_enhanced.sql
--- MGH version 2026-05-01 - CORRECTED
--- Optimized for 425M rows, with proper SOFA scoring (0-24, NOT capped at 4)
+-- Build Sepsis-3 windows from infection onset and materialized SOFA scores.
 
 DROP TABLE IF EXISTS :results_schema.sepsis3_windows CASCADE;
 DROP TABLE IF EXISTS :results_schema.sepsis3_enhanced CASCADE;
@@ -22,14 +21,16 @@ SELECT
   io.infection_onset - INTERVAL '48 hours' AS window_start,
   io.infection_onset + INTERVAL '24 hours' AS window_end,
   io.antibiotic_time,
-  io.culture_time
+  io.culture_time,
+  io.visit_occurrence_id
 FROM :results_schema.view_infection_onset io;
 
-CREATE INDEX idx_sepsis3_windows_pid ON :results_schema.sepsis3_windows (person_id);
-CLUSTER :results_schema.sepsis3_windows USING idx_sepsis3_windows_pid;
+CREATE INDEX idx_sepsis3_windows_pid_window
+  ON :results_schema.sepsis3_windows (person_id, window_start, window_end);
+CLUSTER :results_schema.sepsis3_windows USING idx_sepsis3_windows_pid_window;
 ANALYZE :results_schema.sepsis3_windows;
 
--- 2) Filter time windows first, THEN score SOFA
+-- 2) Filter time windows first, then aggregate already-scored SOFA rows.
 CREATE UNLOGGED TABLE :results_schema.sepsis3_enhanced AS
 WITH time_filtered_sofa AS (
   SELECT 
@@ -40,53 +41,34 @@ WITH time_filtered_sofa AS (
     w.window_end,
     w.antibiotic_time,
     w.culture_time,
+    w.visit_occurrence_id,
     sh.hr,
-    sh.pf_ratio,
-    sh.platelets,
-    sh.bilirubin,
-    sh.map,
-    sh.gcs_total,
-    sh.rrt_active,
-    sh.urine_24h_ml,
-    sh.creatinine
+    sh.total_sofa,
+    sh.components_observed
   FROM :results_schema.sepsis3_windows w
-  JOIN :results_schema.sofa_hourly sh
+  LEFT JOIN :results_schema.sofa_hourly sh
     ON sh.person_id = w.person_id
    AND sh.hr BETWEEN w.window_start AND w.window_end
-),
-sofa_scored AS (
-  SELECT
-    person_id,
-    infection_onset,
-    baseline_start,
-    window_start,
-    window_end,
-    antibiotic_time,
-    culture_time,
-    hr,
-    -- CORRECTED: Sum of 6 systems, each 0-4, total 0-24 (NO outer LEAST/GREATEST)
-    (
-      CASE WHEN pf_ratio IS NULL THEN 0 WHEN pf_ratio >= 400 THEN 0 WHEN pf_ratio >= 300 THEN 1 WHEN pf_ratio >= 200 THEN 2 WHEN pf_ratio >= 100 THEN 3 ELSE 4 END +
-      CASE WHEN platelets IS NULL THEN 0 WHEN platelets > 150 THEN 0 WHEN platelets > 100 THEN 1 WHEN platelets > 50 THEN 2 WHEN platelets > 20 THEN 3 ELSE 4 END +
-      CASE WHEN bilirubin IS NULL THEN 0 WHEN bilirubin/17.1 < 1.2 THEN 0 WHEN bilirubin/17.1 <= 1.9 THEN 1 WHEN bilirubin/17.1 <= 5.9 THEN 2 WHEN bilirubin/17.1 <= 11.9 THEN 3 ELSE 4 END +
-      CASE WHEN map IS NULL THEN 0 WHEN map >= 70 THEN 0 ELSE 1 END +
-      CASE WHEN gcs_total IS NULL THEN 0 WHEN gcs_total >= 15 THEN 0 WHEN gcs_total >= 13 THEN 1 WHEN gcs_total >= 10 THEN 2 WHEN gcs_total >= 6 THEN 3 ELSE 4 END +
-      CASE WHEN rrt_active THEN 4 WHEN urine_24h_ml IS NOT NULL AND urine_24h_ml < 200 THEN 4 WHEN urine_24h_ml IS NOT NULL AND urine_24h_ml < 500 THEN 3 WHEN creatinine IS NULL THEN 0 WHEN creatinine/88.4 < 1.2 THEN 0 WHEN creatinine/88.4 <= 1.9 THEN 1 WHEN creatinine/88.4 <= 3.4 THEN 2 WHEN creatinine/88.4 <= 4.9 THEN 3 ELSE 4 END
-    ) AS sofa_total
-  FROM time_filtered_sofa
 )
 SELECT
   person_id,
+  visit_occurrence_id,
   infection_onset,
   baseline_start,
   window_end,
   antibiotic_time,
   culture_time,
-  COALESCE(MIN(sofa_total) FILTER (WHERE hr BETWEEN baseline_start AND infection_onset), 0) AS baseline_sofa,
-  COALESCE(MAX(sofa_total), 0) AS max_sofa,
-  COALESCE(MAX(sofa_total), 0) - COALESCE(MIN(sofa_total) FILTER (WHERE hr BETWEEN baseline_start AND infection_onset), 0) AS sofa_delta
-FROM sofa_scored
-GROUP BY person_id, infection_onset, baseline_start, window_start, window_end, antibiotic_time, culture_time;
+  'culture_antibiotic_pair'::text AS infection_type,
+  COALESCE(MIN(total_sofa) FILTER (WHERE hr BETWEEN baseline_start AND infection_onset), 0) AS baseline_sofa,
+  COALESCE(MAX(total_sofa), 0) AS max_sofa,
+  COALESCE(MAX(total_sofa), 0) AS peak_sofa,
+  COALESCE(MAX(total_sofa), 0) - COALESCE(MIN(total_sofa) FILTER (WHERE hr BETWEEN baseline_start AND infection_onset), 0) AS sofa_delta,
+  COALESCE(MAX(components_observed), 0) AS max_components_observed,
+  (
+    COALESCE(MAX(total_sofa), 0) - COALESCE(MIN(total_sofa) FILTER (WHERE hr BETWEEN baseline_start AND infection_onset), 0)
+  ) >= 2 AS meets_sepsis3
+FROM time_filtered_sofa
+GROUP BY person_id, visit_occurrence_id, infection_onset, baseline_start, window_start, window_end, antibiotic_time, culture_time;
 
 ALTER TABLE :results_schema.sepsis3_enhanced SET LOGGED;
 CREATE INDEX idx_sepsis3_enhanced_pid_onset ON :results_schema.sepsis3_enhanced (person_id, infection_onset);

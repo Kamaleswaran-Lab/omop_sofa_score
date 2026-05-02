@@ -1,6 +1,5 @@
 -- sql/23_view_infection_onset_enhanced.sql
--- Sepsis-3 infection onset: culture + antibiotic within 72h
--- Generalizable across OMOP sites: auto-detects IV/systemic routes
+-- Sepsis-3 infection onset: culture + antibiotic within configured window.
 
 DROP VIEW IF EXISTS :results_schema.view_infection_onset CASCADE;
 
@@ -26,12 +25,8 @@ site_top_routes AS (
       de.route_concept_id,
       COUNT(*) AS use_count,
       ROW_NUMBER() OVER (ORDER BY COUNT(*) DESC) AS rn
-    FROM :cdm_schema.drug_exposure de
-    WHERE de.drug_concept_id IN (
-      SELECT value::int FROM :results_schema.assumptions 
-      WHERE domain='antibiotic' AND parameter='concept_id'
-    )
-    AND de.route_concept_id IS NOT NULL
+    FROM :results_schema.view_antibiotics de
+    WHERE de.route_concept_id IS NOT NULL
     GROUP BY de.route_concept_id
   ) ranked
   WHERE rn <= 15  -- capture IV, oral, IM, etc.
@@ -50,11 +45,7 @@ site_route_stats AS (
   SELECT 
     COUNT(*) FILTER (WHERE route_concept_id IS NOT NULL) AS routes_populated,
     COUNT(*) AS total_exposures
-  FROM :cdm_schema.drug_exposure
-  WHERE drug_concept_id IN (
-    SELECT value::int FROM :results_schema.assumptions 
-    WHERE domain='antibiotic' AND parameter='concept_id'
-  )
+  FROM :results_schema.view_antibiotics
 ),
 -- All antibiotic exposures
 antibiotics AS (
@@ -62,18 +53,13 @@ antibiotics AS (
     de.person_id,
     de.drug_exposure_id,
     de.visit_occurrence_id,
-    COALESCE(de.drug_exposure_start_datetime, de.drug_exposure_start_date::timestamp) AS abx_start,
+    de.drug_exposure_start_datetime AS abx_start,
     de.route_concept_id,
     CASE 
       WHEN de.route_concept_id IN (SELECT route_concept_id FROM effective_routes) THEN 1 
       ELSE 0 
     END AS is_iv_systemic
-  FROM :cdm_schema.drug_exposure de
-  WHERE de.drug_concept_id IN (
-    SELECT value::int FROM :results_schema.assumptions 
-    WHERE domain='antibiotic' AND parameter='concept_id'
-  )
-  AND COALESCE(de.drug_exposure_start_datetime, de.drug_exposure_start_date::timestamp) IS NOT NULL
+  FROM :results_schema.view_antibiotics de
 ),
 -- Filter based on site data quality
 filtered_antibiotics AS (

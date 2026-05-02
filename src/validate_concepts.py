@@ -10,24 +10,25 @@ from chorus_concepts import (
 def validate(conn_str, cdm_schema):
     conn = psycopg2.connect(conn_str)
     print("="*70)
-    print("OMOP SOFA Concept Validation - Site A")
+    print("OMOP SOFA Concept Validation")
     print("="*70)
     
     checks = [
-        ("PaO2", PAO2_CONCEPTS[0], 7974),
-        ("FiO2", FIO2_CONCEPTS[0], 1495269),
-        ("Creatinine", CREATININE_CONCEPTS[0], 549112),
-        ("Bilirubin", BILIRUBIN_CONCEPTS[0], 239317),
-        ("Platelets", PLATELETS_CONCEPTS[0], 489315),
-        ("Lactate", LACTATE_CONCEPTS[0], 78297),
+        ("PaO2", PAO2_CONCEPTS),
+        ("FiO2", FIO2_CONCEPTS),
+        ("Creatinine", CREATININE_CONCEPTS),
+        ("Bilirubin", BILIRUBIN_CONCEPTS),
+        ("Platelets", PLATELETS_CONCEPTS),
+        ("Lactate", LACTATE_CONCEPTS),
     ]
     
-    for name, cid, expected in checks:
-        query = f"SELECT COUNT(*) as n FROM {cdm_schema}.measurement WHERE measurement_concept_id = {cid}"
+    for name, concept_ids in checks:
+        ids = ",".join(str(cid) for cid in concept_ids)
+        query = f"SELECT COUNT(*) as n FROM {cdm_schema}.measurement WHERE measurement_concept_id IN ({ids})"
         df = pd.read_sql(query, conn)
         actual = df.iloc[0]['n']
-        status = "OK" if abs(actual - expected) / expected < 0.1 else "WARN"
-        print(f"[{status}] {name:12} {cid:>9} | expected {expected:>9,} | actual {actual:>9,}")
+        status = "OK" if actual > 0 else "WARN"
+        print(f"[{status}] {name:12} concepts={len(concept_ids):>2} | actual {actual:>9,}")
     
     conn.close()
 
