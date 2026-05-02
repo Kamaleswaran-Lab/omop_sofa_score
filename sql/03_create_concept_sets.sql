@@ -1,5 +1,10 @@
 -- 03_create_concept_sets.sql
 -- Canonical concept sets and vocabulary validation for the OMOP SOFA pipeline.
+-- CUSTOM SITE A EXPANSION - 2026-05-02
+--   * Removed 37026905 (FiO2, deprecated D) and 4145896 (ventilation, maps to epilepsy U)
+--   * Added valid FiO2 LOINC 3024882
+--   * Added B2AI ventilation (2 concepts) and B2AI CRRT (10 concepts) to rrt
+--   * Added new 'ecmo' set for ECMO procedures
 
 DROP TABLE IF EXISTS :results_schema.concept_set_members CASCADE;
 
@@ -28,7 +33,7 @@ VALUES
     ('creatinine', 3016723, 'Measurement', true, false, 'ATHENA', 'Creatinine'),
     ('urine_output', 3014315, 'Measurement', true, false, 'ATHENA', 'Urine output volume'),
 
-    -- Vitals and neuro (Relaxed standard requirement for historical/non-standard codes)
+    -- Vitals and neuro
     ('map', 4108290, 'Measurement', true, false, 'ATHENA', 'Invasive mean arterial pressure'),
     ('map', 3027598, 'Measurement', true, false, 'ATHENA', 'Mean blood pressure'),
     ('sbp', 3004249, 'Measurement', true, false, 'ATHENA', 'Systolic blood pressure'),
@@ -41,7 +46,7 @@ VALUES
     ('gcs', 3009094, NULL, true, false, 'ATHENA', 'GCS verbal'),
     ('gcs', 3008223, NULL, true, false, 'ATHENA', 'GCS motor'),
 
-    -- PaO2 and FiO2 (Relaxed standard requirement for historical/non-standard codes)
+    -- PaO2 and FiO2
     ('pao2', 3027801, NULL, true, false, 'ATHENA', 'O2 partial pressure arterial blood'),
     ('pao2', 3007461, NULL, true, false, 'ATHENA', 'O2 partial pressure blood arterial'),
     ('pao2', 3023091, NULL, true, false, 'ATHENA', 'O2 partial pressure adjusted arterial'),
@@ -54,22 +59,42 @@ VALUES
     ('fio2', 45508326, 'Measurement', false, false, 'ATHENA', 'FIO2 - Inspired fraction'),
     ('fio2', 3026238, NULL, true, false, 'ATHENA', 'O2/Inspired gas on ventilator'),
     ('fio2', 3025408, NULL, true, false, 'ATHENA', 'O2/Inspired gas by analyzer on ventilator'),
-    ('fio2', 37026905, 'Observation', false, false, 'ATHENA', 'Oxygen/Inspired gas setting'),
+    -- ('fio2', 37026905, 'Observation', false, false, 'ATHENA', 'Oxygen/Inspired gas setting'), -- REMOVED: deprecated D in Site A vocab
     ('fio2', 37040455, 'Observation', false, false, 'ATHENA', 'Oxygen/Inspired gas'),
     ('fio2', 2147482989, NULL, false, true, 'LOCAL', 'Site-local FiO2 concept'),
+    ('fio2', 3024882, NULL, true, false, 'CUSTOM', 'Oxygen/Total gas setting [Volume Fraction] Ventilator - Site A'), -- ADDED
 
-    -- Support therapies (Fully mapped to validated RxNorm Ingredients and SNOMED)
+    -- Support therapies
     ('ventilation', 4202832, 'Procedure', true, false, 'ATHENA', 'Intubation'),
     ('ventilation', 42738694, 'Procedure', true, false, 'ATHENA', 'Mechanical ventilation procedure'),
-    ('ventilation', 4145896, 'Condition', false, false, 'ATHENA', 'Ventilation support'),
+    -- ('ventilation', 4145896, 'Condition', false, false, 'ATHENA', 'Ventilation support'), -- REMOVED: maps to epilepsy U in Site A vocab
+    ('ventilation', 2147482986, 'Procedure', true, false, 'CUSTOM', 'Mechanical Ventilation | ETT Double Lumen - Site A'), -- ADDED
+    ('ventilation', 2147482987, 'Procedure', true, false, 'CUSTOM', 'Mechanical Ventilation | ETT Comment - Site A'), -- ADDED
     ('rrt', 4197217, 'Procedure', true, false, 'ATHENA', 'Dialysis procedure'),
     ('rrt', 37018292, 'Procedure', true, false, 'ATHENA', 'Continuous renal replacement therapy'),
+    -- CUSTOM SITE A CRRT EXPANSION
+    ('rrt', 2147483064, 'Measurement', true, false, 'CUSTOM', 'CRRT Desired Fluid Loss'),
+    ('rrt', 2147483187, 'Measurement', true, false, 'CUSTOM', 'CRRT warming device'),
+    ('rrt', 2147483188, 'Measurement', true, false, 'CUSTOM', 'CRRT volume to be removed'),
+    ('rrt', 2147483189, 'Measurement', true, false, 'CUSTOM', 'CRRT volume not to be removed'),
+    ('rrt', 2147483190, 'Measurement', true, false, 'CUSTOM', 'CRRT venous pressure (mmHg)'),
+    ('rrt', 2147483191, 'Measurement', true, false, 'CUSTOM', 'CRRT Venous chamber blood level'),
+    ('rrt', 2147483192, 'Measurement', true, false, 'CUSTOM', 'CRRT ultrafiltrate rate less than zero'),
+    ('rrt', 2147483193, 'Measurement', true, false, 'CUSTOM', 'CRRT tubing change date'),
+    ('rrt', 2147483194, 'Measurement', true, false, 'CUSTOM', 'CRRT Total previous hour intake'),
+    ('rrt', 2147483195, 'Measurement', true, false, 'CUSTOM', 'CRRT temp management'),
     ('vasopressor', 1321341, 'Drug', true, false, 'ATHENA', 'Norepinephrine'),
     ('vasopressor', 1343916, 'Drug', true, false, 'ATHENA', 'Epinephrine'),
     ('vasopressor', 1507835, 'Drug', true, false, 'ATHENA', 'Vasopressin'),
     ('vasopressor', 1135766, 'Drug', true, false, 'ATHENA', 'Phenylephrine'),
     ('vasopressor', 1337860, 'Drug', true, false, 'ATHENA', 'Dopamine'),
     ('vasopressor', 1337720, 'Drug', true, false, 'ATHENA', 'Dobutamine');
+
+-- CUSTOM SITE A: ECMO set (new)
+INSERT INTO :results_schema.concept_set_members (concept_set_name, concept_id, expected_domain_id, require_standard, local_allowed, source, note)
+VALUES
+    ('ecmo', 46257397, 'Procedure', true, false, 'CUSTOM', 'ECMO insertion central cannula, birth-5y'),
+    ('ecmo', 46257398, 'Procedure', true, false, 'CUSTOM', 'ECMO insertion central cannula, 6y+');
 
 ALTER TABLE :results_schema.concept_set_members ADD COLUMN expected_concept_code text;
 
