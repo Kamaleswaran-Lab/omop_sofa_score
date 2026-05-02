@@ -168,11 +168,10 @@ WHERE
   OR (m.expected_concept_code IS NOT NULL AND c.concept_code <> m.expected_concept_code)
   OR (m.require_standard AND COALESCE(c.standard_concept, '') <> 'S');
 
-SELECT COUNT(*) AS concept_set_validation_failure_count
-FROM :results_schema.concept_set_validation_failures
-\gset
+SELECT CASE WHEN COUNT(*) > 0 THEN 1 ELSE 0 END AS validation_failed
+FROM :results_schema.concept_set_validation_failures\gset
 
-\if :concept_set_validation_failure_count
+\if :validation_failed
   \echo 'Concept set validation failed. Inspect :results_schema.concept_set_validation_failures.'
   \quit 3
 \endif
