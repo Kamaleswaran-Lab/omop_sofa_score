@@ -1,7 +1,10 @@
 -- 03_create_concept_sets.sql
 -- Canonical concept sets and vocabulary validation for the OMOP SOFA pipeline.
--- CUSTOM SITE A 2026-05-02: removed 37026905 (FiO2 deprecated) and 4145896 (ventilation -> epilepsy),
--- added valid FiO2 LOINC, B2AI ventilation, B2AI CRRT, and ECMO.
+-- UPDATED 2026-05-02 Site A: 
+--   - removed invalid 37026905 (FiO2) and 4145896 (ventilation)
+--   - added FiO2 3024882, ventilation B2AI, RRT B2AI, ECMO
+--   - antibiotic expansion now excludes non-systemic routes via dose form + route relationships
+--   - validation now uses portable DO block instead of psql \if
 
 DROP TABLE IF EXISTS :results_schema.concept_set_members CASCADE;
 
@@ -16,8 +19,6 @@ CREATE TABLE :results_schema.concept_set_members (
     PRIMARY KEY (concept_set_name, concept_id)
 );
 
--- Lab, vital, respiratory, neurologic, renal replacement, ventilation, and
--- vasopressor seed concepts. Local concepts must be explicitly marked.
 INSERT INTO :results_schema.concept_set_members (concept_set_name, concept_id, expected_domain_id, require_standard, local_allowed, source, note)
 VALUES
     -- Labs
@@ -56,20 +57,20 @@ VALUES
     ('fio2', 45508326, 'Measurement', false, false, 'ATHENA', 'FIO2 - Inspired fraction'),
     ('fio2', 3026238, NULL, true, false, 'ATHENA', 'O2/Inspired gas on ventilator'),
     ('fio2', 3025408, NULL, true, false, 'ATHENA', 'O2/Inspired gas by analyzer on ventilator'),
-    -- ('fio2', 37026905, 'Observation', false, false, 'ATHENA', 'Oxygen/Inspired gas setting'), -- REMOVED Site A: invalid_reason='D'
+    -- ('fio2', 37026905, 'Observation', false, false, 'ATHENA', 'Oxygen/Inspired gas setting'), -- REMOVED: invalid_reason='D'
     ('fio2', 37040455, 'Observation', false, false, 'ATHENA', 'Oxygen/Inspired gas'),
     ('fio2', 2147482989, NULL, false, true, 'LOCAL', 'Site-local FiO2 concept'),
-    ('fio2', 3024882, NULL, true, false, 'CUSTOM', 'Oxygen/Total gas setting [Volume Fraction] Ventilator - Site A'), -- ADDED
+    ('fio2', 3024882, NULL, true, false, 'CUSTOM', 'Oxygen/Total gas setting [Volume Fraction] Ventilator - Site A'),
 
     -- Support therapies
     ('ventilation', 4202832, 'Procedure', true, false, 'ATHENA', 'Intubation'),
     ('ventilation', 42738694, 'Procedure', true, false, 'ATHENA', 'Mechanical ventilation procedure'),
-    -- ('ventilation', 4145896, 'Condition', false, false, 'ATHENA', 'Ventilation support'), -- REMOVED Site A: invalid_reason='U', maps to epilepsy
-    ('ventilation', 2147482986, 'Procedure', true, false, 'CUSTOM', 'Mechanical Ventilation | ETT Double Lumen - Site A'), -- ADDED
-    ('ventilation', 2147482987, 'Procedure', true, false, 'CUSTOM', 'Mechanical Ventilation | ETT Comment - Site A'), -- ADDED
+    -- ('ventilation', 4145896, 'Condition', false, false, 'ATHENA', 'Ventilation support'), -- REMOVED: maps to epilepsy
+    ('ventilation', 2147482986, 'Procedure', true, false, 'CUSTOM', 'Mechanical Ventilation | ETT Double Lumen - Site A'),
+    ('ventilation', 2147482987, 'Procedure', true, false, 'CUSTOM', 'Mechanical Ventilation | ETT Comment - Site A'),
     ('rrt', 4197217, 'Procedure', true, false, 'ATHENA', 'Dialysis procedure'),
     ('rrt', 37018292, 'Procedure', true, false, 'ATHENA', 'Continuous renal replacement therapy'),
-    ('rrt', 2147483064, 'Measurement', true, false, 'CUSTOM', 'CRRT Desired Fluid Loss - Site A'), -- ADDED
+    ('rrt', 2147483064, 'Measurement', true, false, 'CUSTOM', 'CRRT Desired Fluid Loss - Site A'),
     ('rrt', 2147483187, 'Measurement', true, false, 'CUSTOM', 'CRRT warming device - Site A'),
     ('rrt', 2147483188, 'Measurement', true, false, 'CUSTOM', 'CRRT volume to be removed - Site A'),
     ('rrt', 2147483189, 'Measurement', true, false, 'CUSTOM', 'CRRT volume not to be removed - Site A'),
@@ -86,7 +87,7 @@ VALUES
     ('vasopressor', 1337860, 'Drug', true, false, 'ATHENA', 'Dopamine'),
     ('vasopressor', 1337720, 'Drug', true, false, 'ATHENA', 'Dobutamine');
 
--- CUSTOM SITE A: ECMO (new concept set)
+-- ECMO (new concept set)
 INSERT INTO :results_schema.concept_set_members (concept_set_name, concept_id, expected_domain_id, require_standard, local_allowed, source, note)
 VALUES
     ('ecmo', 46257397, 'Procedure', true, false, 'CUSTOM', 'ECMO insertion central cannula, birth-5y - Site A'),
@@ -122,7 +123,7 @@ FROM (VALUES
     (618898),(1447635),(3516065),(3667301),(3667306)
 ) AS t(concept_id);
 
--- Antibiotics are expanded from ATC J01 / antibacterials for systemic use.
+-- Antibiotics: ATC J01 systemic only, exclude non-systemic by dose form AND route
 INSERT INTO :results_schema.concept_set_members (concept_set_name, concept_id, expected_domain_id, require_standard, local_allowed, source, note)
 SELECT DISTINCT 'antibiotic', ca.descendant_concept_id, 'Drug', true, false, 'ATHENA concept_ancestor 21602796', c.concept_name
 FROM :vocab_schema.concept_ancestor ca
@@ -130,7 +131,22 @@ JOIN :vocab_schema.concept c ON c.concept_id = ca.descendant_concept_id
 WHERE ca.ancestor_concept_id = 21602796
   AND c.domain_id = 'Drug'
   AND c.standard_concept = 'S'
-  AND c.invalid_reason IS NULL;
+  AND c.invalid_reason IS NULL
+  AND c.concept_name !~* '(topical|ophthalm|otic|eye|ear|cream|ointment|gel|nasal|inhal|dermal|cutan|vaginal|rectal|shampoo|spray|drops|lotion|irrigation|intravitreal|suppository|enema)'
+  AND NOT EXISTS (
+    SELECT 1 FROM :vocab_schema.concept_relationship cr
+    JOIN :vocab_schema.concept df ON df.concept_id = cr.concept_id_2
+    WHERE cr.concept_id_1 = c.concept_id
+      AND cr.relationship_id IN ('RxNorm has dose form','Has dose form')
+      AND df.concept_name ~* '(topical|ophthalmic|otic|cream|ointment|gel|nasal|inhalation|dermal|vaginal|rectal|shampoo|spray|drops|lotion|irrigation|suppository|enema)'
+  )
+  AND NOT EXISTS (
+    SELECT 1 FROM :vocab_schema.concept_relationship cr2
+    JOIN :vocab_schema.concept rt ON rt.concept_id = cr2.concept_id_2
+    WHERE cr2.concept_id_1 = c.concept_id
+      AND cr2.relationship_id IN ('Has route','RxNorm has route')
+      AND rt.concept_name ~* '(ophthalmic|otic|topical|nasal|inhalation|vaginal|rectal|intravitreal|ear|eye)'
+  );
 
 DROP TABLE IF EXISTS :results_schema.vasopressor_nee_factors CASCADE;
 CREATE TABLE :results_schema.vasopressor_nee_factors (
@@ -176,12 +192,13 @@ WHERE
     OR (m.expected_concept_code IS NOT NULL AND c.concept_code <> m.expected_concept_code)
     OR (m.require_standard AND COALESCE(c.standard_concept, '') <> 'S');
 
-SELECT CASE WHEN COUNT(*) > 0 THEN 1 ELSE 0 END AS validation_failed
-FROM :results_schema.concept_set_validation_failures\gset
-
-\if :validation_failed
-  \echo 'Concept set validation failed. Inspect :results_schema.concept_set_validation_failures.'
-  \quit 3
-\endif
+-- Portable validation - works in psql, Airflow, dbt, JDBC
+DO $$
+BEGIN
+  IF (SELECT COUNT(*) FROM :results_schema.concept_set_validation_failures) > 0 THEN
+    RAISE EXCEPTION 'Concept set validation failed: % rows in :results_schema.concept_set_validation_failures. Query table for details.', 
+      (SELECT COUNT(*) FROM :results_schema.concept_set_validation_failures);
+  END IF;
+END $$;
 
 CREATE INDEX idx_concept_set_members_name_id ON :results_schema.concept_set_members(concept_set_name, concept_id);
