@@ -2,15 +2,18 @@
 -- Canonical multi-site OMOP SOFA / Sepsis-3 / CDC ASE runner.
 --
 -- Override schemas from psql as needed:
---   psql ... -v results_schema=results_site_a -v cdm_schema=omopcdm -v vocab_schema=vocabulary -f sql/RUN_ALL_enhanced.sql
+-- psql ... -v results_schema=results_site_a -v cdm_schema=omopcdm -v vocab_schema=vocabulary -f sql/RUN_ALL_enhanced.sql
+
 \if :{?results_schema}
 \else
   \set results_schema results
 \endif
+
 \if :{?cdm_schema}
 \else
   \set cdm_schema omopcdm
 \endif
+
 \if :{?vocab_schema}
 \else
   \set vocab_schema vocabulary
@@ -29,12 +32,26 @@ SET statement_timeout = 0;
 \ir 01_create_assumptions_table.sql
 \ir 03_create_concept_sets.sql
 \ir 02_create_indexes.sql
+
+DROP VIEW IF EXISTS :results_schema.view_labs_core CASCADE;
 \ir 10_view_labs_core.sql
+
+DROP VIEW IF EXISTS :results_schema.view_vitals_core CASCADE;
 \ir 11_view_vitals_core.sql
+
+DROP VIEW IF EXISTS :results_schema.view_vasopressors_nee CASCADE;
 \ir 12_view_vasopressors_nee.sql
+
+DROP VIEW IF EXISTS :results_schema.view_ventilation CASCADE;
 \ir 13_view_ventilation.sql
+
+DROP VIEW IF EXISTS :results_schema.view_neuro CASCADE;
 \ir 14_view_neuro.sql
+
+DROP VIEW IF EXISTS :results_schema.view_urine_24h CASCADE;
 \ir 15_view_urine_24h.sql
+
+DROP VIEW IF EXISTS :results_schema.view_rrt CASCADE;
 \ir 16_view_rrt.sql
 
 -- infection windows
@@ -66,12 +83,26 @@ DROP TABLE IF EXISTS :results_schema.sepsis3 CASCADE;
 DROP TABLE IF EXISTS :results_schema.sepsis3_enhanced_collapsed CASCADE;
 \ir 41_create_sepsis3_collapsed_48h.sql
 
+-- CDC ASE Tables
+DROP TABLE IF EXISTS :results_schema.ase_parameters CASCADE;
 \ir 50_cdc_ase_parameters.sql
+
+DROP TABLE IF EXISTS :results_schema.ase_blood_cultures CASCADE;
 \ir 51_cdc_ase_blood_cultures.sql
+
+DROP TABLE IF EXISTS :results_schema.ase_qad CASCADE;
 \ir 52_cdc_ase_qad.sql
+
+DROP TABLE IF EXISTS :results_schema.ase_organ_dysfunction CASCADE;
 \ir 53_cdc_ase_organ_dysfunction.sql
+
+DROP TABLE IF EXISTS :results_schema.ase_cases CASCADE;
 \ir 54_cdc_ase_cases.sql
+
+DROP TABLE IF EXISTS :results_schema.ase_with_sofa CASCADE;
 \ir 55_cdc_ase_with_sofa.sql
+
+DROP TABLE IF EXISTS :results_schema.cdc_ase_cohort_final CASCADE;
 \ir 56_cdc_ase_cohort_final.sql
 
 -- Comparison
