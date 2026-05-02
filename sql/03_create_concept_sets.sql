@@ -32,10 +32,11 @@ VALUES
 
   -- Vitals and neuro
   ('map', 4108290, 'Measurement', true, false, 'ATHENA', 'Invasive mean arterial pressure'),
-  ('map', 3027597, 'Measurement', true, false, 'ATHENA', 'Mean arterial pressure'),
-  ('map', 3019962, 'Measurement', true, false, 'ATHENA', 'MAP legacy'),
-  ('sbp', 3034703, 'Measurement', true, false, 'ATHENA', 'Systolic blood pressure'),
-  ('dbp', 3027598, 'Measurement', true, false, 'ATHENA', 'Diastolic blood pressure'),
+  ('map', 3027598, 'Measurement', true, false, 'ATHENA', 'Mean blood pressure'),
+  ('sbp', 3004249, 'Measurement', true, false, 'ATHENA', 'Systolic blood pressure'),
+  ('dbp', 3012888, 'Measurement', true, false, 'ATHENA', 'Diastolic blood pressure'),
+  ('dbp', 3034703, 'Measurement', true, false, 'ATHENA', 'Diastolic blood pressure--sitting'),
+  ('dbp', 3019962, 'Measurement', true, false, 'ATHENA', 'Diastolic blood pressure--standing'),
   ('heart_rate', 3027018, 'Measurement', true, false, 'ATHENA', 'Heart rate'),
   ('gcs', 4093836, NULL, true, false, 'ATHENA', 'Glasgow coma score total'),
   ('gcs', 3016335, NULL, true, false, 'ATHENA', 'GCS eye'),
@@ -50,7 +51,6 @@ VALUES
   ('pao2', 40772940, NULL, true, false, 'ATHENA', 'Arterial oxygen tension'),
   ('fio2', 3020716, NULL, true, false, 'ATHENA', 'Inhaled oxygen concentration'),
   ('fio2', 4353936, NULL, true, false, 'ATHENA', 'Inspired oxygen concentration'),
-  ('fio2', 3004249, NULL, true, false, 'ATHENA', 'Inspired O2 fraction'),
   ('fio2', 3036277, NULL, true, false, 'ATHENA', 'FiO2'),
   ('fio2', 37547367, NULL, true, false, 'ATHENA', 'Fraction of Inspired Oxygen'),
   ('fio2', 45508326, NULL, true, false, 'ATHENA', 'FIO2 - Inspired fraction'),
@@ -72,6 +72,21 @@ VALUES
   ('vasopressor', 1135766, 'Drug', true, false, 'ATHENA', 'Phenylephrine'),
   ('vasopressor', 1319998, 'Drug', true, false, 'ATHENA', 'Dopamine'),
   ('vasopressor', 1337720, 'Drug', true, false, 'ATHENA', 'Dobutamine');
+
+ALTER TABLE :results_schema.concept_set_members
+  ADD COLUMN expected_concept_code text;
+
+UPDATE :results_schema.concept_set_members
+SET expected_concept_code = expected.code
+FROM (VALUES
+  (4108290::bigint, '251075007'),
+  (3027598::bigint, '8478-0'),
+  (3004249::bigint, '8480-6'),
+  (3012888::bigint, '8462-4'),
+  (3034703::bigint, '8453-3'),
+  (3019962::bigint, '8454-1')
+) AS expected(concept_id, code)
+WHERE concept_set_members.concept_id = expected.concept_id;
 
 INSERT INTO :results_schema.concept_set_members
   (concept_set_name, concept_id, expected_domain_id, require_standard, local_allowed, source, note)
@@ -132,6 +147,8 @@ SELECT
   m.concept_id,
   m.source,
   m.expected_domain_id,
+  m.expected_concept_code,
+  c.concept_code AS actual_concept_code,
   c.domain_id AS actual_domain_id,
   c.standard_concept,
   c.invalid_reason,
@@ -139,6 +156,7 @@ SELECT
     WHEN c.concept_id IS NULL AND NOT m.local_allowed THEN 'missing_from_vocabulary'
     WHEN c.invalid_reason IS NOT NULL THEN 'invalid_concept'
     WHEN m.expected_domain_id IS NOT NULL AND c.domain_id <> m.expected_domain_id THEN 'wrong_domain'
+    WHEN m.expected_concept_code IS NOT NULL AND c.concept_code <> m.expected_concept_code THEN 'wrong_concept_code'
     WHEN m.require_standard AND COALESCE(c.standard_concept, '') <> 'S' THEN 'non_standard'
   END AS failure_reason
 FROM :results_schema.concept_set_members m
@@ -147,6 +165,7 @@ WHERE
   (c.concept_id IS NULL AND NOT m.local_allowed)
   OR c.invalid_reason IS NOT NULL
   OR (m.expected_domain_id IS NOT NULL AND c.domain_id <> m.expected_domain_id)
+  OR (m.expected_concept_code IS NOT NULL AND c.concept_code <> m.expected_concept_code)
   OR (m.require_standard AND COALESCE(c.standard_concept, '') <> 'S');
 
 SELECT COUNT(*) AS concept_set_validation_failure_count
