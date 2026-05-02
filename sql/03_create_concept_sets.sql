@@ -192,13 +192,9 @@ WHERE
     OR (m.expected_concept_code IS NOT NULL AND c.concept_code <> m.expected_concept_code)
     OR (m.require_standard AND COALESCE(c.standard_concept, '') <> 'S');
 
--- Portable validation: Forces a fatal data exception if validation fails
--- psql WILL interpolate variables here because it is not inside a DO $$ block
+-- Portable validation: Forces a fatal data exception if validation fails 
 SELECT 
-    CASE 
-        WHEN COUNT(*) > 0 THEN CAST('ERROR: Concept set validation failed! Check failures table for details.' AS INT)
-        ELSE 1 
-    END AS validation_check
+    1 / (CASE WHEN COUNT(*) > 0 THEN 0 ELSE 1 END) AS validation_check
 FROM :results_schema.concept_set_validation_failures;
 
 CREATE INDEX idx_concept_set_members_name_id ON :results_schema.concept_set_members(concept_set_name, concept_id);
